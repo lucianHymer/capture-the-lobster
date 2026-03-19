@@ -147,7 +147,8 @@ export default function HexGrid({
 
     switch (tile.type) {
       case 'wall':
-        return '/tiles/terrain/forest-deciduous.png';
+        // Grass base underneath — forest overlay is rendered separately
+        return grassVariant(q, r);
       case 'base_a':
       case 'base_b':
         // Flag hex uses keep, surrounding base/spawn uses castle
@@ -220,9 +221,9 @@ export default function HexGrid({
         const terrainSrc = getTerrainImage(tile, q, r);
         const isForest = isWall;
 
-        // Image dimensions
-        const imgW = isForest ? forestWidth : hexWidth;
-        const imgH = isForest ? forestHeight : hexHeight;
+        // Base terrain always uses hex size (grass base for walls too)
+        const imgW = hexWidth;
+        const imgH = hexHeight;
 
         return (
           <g
@@ -238,7 +239,7 @@ export default function HexGrid({
             />
 
             {/* Terrain tile image — clipped to hex shape */}
-            {(isVisible || isFogged) && (
+            {(isVisible || isFogged || isForest) && (
               <g
                 opacity={isHidden ? 0.15 : isFogged ? 0.3 : 1}
                 clipPath="url(#hex-clip)"
@@ -255,9 +256,10 @@ export default function HexGrid({
               </g>
             )}
 
-            {/* Forest overlay — slightly larger for canopy effect, rendered above */}
-            {isForest && isVisible && (
+            {/* Forest overlay — always render for wall tiles (with opacity for fog) */}
+            {isForest && (
               <g
+                opacity={isHidden ? 0.15 : isFogged ? 0.3 : 1}
                 clipPath="url(#hex-clip)"
                 transform={`translate(${cx},${cy})`}
               >

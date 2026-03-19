@@ -277,9 +277,21 @@ export function generateMap(config?: MapConfig): GameMap {
   // If not connected, remove walls along the shortest conceptual path until connected
   ensureConnectivity(tiles, allKeys, flagA, flagB, wallKeys, protectedKeys);
 
+  // 7. Add forest border ring around the playable area
+  // All hexes at radius+1 become wall tiles (visual boundary)
+  const borderHexes = hexesInRadius({ q: 0, r: 0 }, radius + 1).filter(
+    (h) => hexDistance(h, { q: 0, r: 0 }) === radius + 1,
+  );
+  for (const hex of borderHexes) {
+    const key = hexToString(hex);
+    if (!tiles.has(key)) {
+      tiles.set(key, 'wall');
+    }
+  }
+
   return {
     tiles,
-    radius,
+    radius: radius + 1, // Include the border ring in the reported radius
     bases: {
       A: { flag: flagA, spawns: spawnsA },
       B: { flag: flagB, spawns: spawnsB },
