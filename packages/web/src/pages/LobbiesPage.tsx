@@ -43,6 +43,13 @@ export default function LobbiesPage() {
   const [games, setGames] = useState<Game[]>(mockGames);
   const [starting, setStarting] = useState(false);
   const [startingLobby, setStartingLobby] = useState(false);
+  const [creatingOpen, setCreatingOpen] = useState(false);
+  const [openLobbyResult, setOpenLobbyResult] = useState<{
+    lobbyId: string;
+    token?: string;
+    agentId?: string;
+    mcpUrl?: string;
+  } | null>(null);
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -101,7 +108,7 @@ export default function LobbiesPage() {
       const res = await fetch('/api/lobbies/start', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ teamSize: 2 }),
+        body: JSON.stringify({ teamSize: 4 }),
       });
       if (res.ok) {
         const data = await res.json();
@@ -114,19 +121,65 @@ export default function LobbiesPage() {
     setStartingLobby(false);
   }
 
+  async function handleCreateOpenLobby() {
+    setCreatingOpen(true);
+    setOpenLobbyResult(null);
+    try {
+      // 1. Create lobby with external slots
+      const lobbyRes = await fetch('/api/lobbies/create', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ teamSize: 2, externalSlots: 1 }),
+      });
+      if (!lobbyRes.ok) { setCreatingOpen(false); return; }
+      const lobbyData = await lobbyRes.json();
+
+      // 2. Register an external agent slot
+      const regRes = await fetch('/api/register', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ lobbyId: lobbyData.lobbyId }),
+      });
+      if (!regRes.ok) { setCreatingOpen(false); return; }
+      const regData = await regRes.json();
+
+      setOpenLobbyResult({
+        lobbyId: lobbyData.lobbyId,
+        token: regData.token,
+        agentId: regData.agentId,
+        mcpUrl: `${window.location.origin}${regData.mcpUrl}`,
+      });
+
+      // Navigate to lobby view after a short delay
+      setTimeout(() => {
+        navigate(`/lobby/${lobbyData.lobbyId}`);
+      }, 5000);
+    } catch {
+      // API error
+    }
+    setCreatingOpen(false);
+  }
+
   const activeGames = games.filter((g) => g.phase !== 'finished');
   const finishedGames = games.filter((g) => g.phase === 'finished');
 
   return (
     <div className="space-y-10">
       {/* Start Game Buttons */}
-      <div className="flex justify-center gap-4">
+      <div className="flex flex-wrap justify-center gap-4">
         <button
           onClick={handleStartLobby}
           disabled={startingLobby}
           className="cursor-pointer rounded-xl bg-emerald-600 px-10 py-4 text-lg font-bold text-white shadow-lg shadow-emerald-900/40 transition-all hover:bg-emerald-500 hover:shadow-emerald-800/50 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
         >
           {startingLobby ? 'Starting Lobby...' : '\u{1F99E} Start Lobby Game'}
+        </button>
+        <button
+          onClick={handleCreateOpenLobby}
+          disabled={creatingOpen}
+          className="cursor-pointer rounded-xl bg-purple-600 px-8 py-4 text-lg font-bold text-white shadow-lg shadow-purple-900/40 transition-all hover:bg-purple-500 hover:shadow-purple-800/50 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          {creatingOpen ? 'Creating...' : '\u{1F310} Create Open Lobby'}
         </button>
         <button
           onClick={() => handleStartGame(2)}
@@ -143,6 +196,37 @@ export default function LobbiesPage() {
           {starting ? 'Starting...' : 'Quick 4v4'}
         </button>
       </div>
+
+      {/* Open Lobby Connection Info */}
+      {openLobbyResult && (
+        <div className="mx-auto max-w-2xl rounded-lg border border-purple-700 bg-purple-900/30 p-5">
+          <h3 className="mb-3 text-lg font-bold text-purple-300">
+            Open Lobby Created - Share with External Agents
+          </h3>
+          <div className="space-y-2 font-mono text-sm">
+            <div>
+              <span className="text-gray-400">MCP Endpoint: </span>
+              <span className="text-purple-200 select-all">{openLobbyResult.mcpUrl}</span>
+            </div>
+            <div>
+              <span className="text-gray-400">Bearer Token: </span>
+              <span className="text-purple-200 select-all break-all">{openLobbyResult.token}</span>
+            </div>
+            <div>
+              <span className="text-gray-400">Agent ID: </span>
+              <span className="text-purple-200 select-all">{openLobbyResult.agentId}</span>
+            </div>
+            <div>
+              <span className="text-gray-400">Lobby ID: </span>
+              <span className="text-purple-200 select-all">{openLobbyResult.lobbyId}</span>
+            </div>
+          </div>
+          <p className="mt-3 text-xs text-gray-400">
+            External agents connect via MCP Streamable HTTP. Send POST to the endpoint with
+            Authorization: Bearer &lt;token&gt;. Redirecting to lobby view in 5s...
+          </p>
+        </div>
+      )}
 
       {/* Active Games */}
       <section>

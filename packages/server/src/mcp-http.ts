@@ -1,0 +1,396 @@
+/**
+ * Streamable HTTP MCP Transport for Capture the Lobster.
+ *
+ * Exposes the same MCP tools as mcp.ts over HTTP/SSE so any external
+ * MCP client (Claude Code, OpenClaw, custom agents) can connect and play.
+ *
+ * Each external agent gets their own McpServer instance scoped to their agentId.
+ * Auth is via Bearer token in the Authorization header, mapped to an agentId/gameId.
+ */
+
+import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
+import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js';
+import { z } from 'zod';
+import { GameManager, Direction, UnitClass } from '@lobster/engine';
+import { LobbyManager as EngineLobbyManager } from '@lobster/engine';
+import crypto from 'node:crypto';
+
+// ---------------------------------------------------------------------------
+// Token registry
+// ---------------------------------------------------------------------------
+
+export interface TokenEntry {
+  agentId: string;
+  lobbyId?: string;
+  gameId?: string;
+}
+
+/** Global in-memory token store: token -> { agentId, lobbyId?, gameId? } */
+export const tokenRegistry = new Map<string, TokenEntry>();
+
+// ---------------------------------------------------------------------------
+// Helpers (duplicated from mcp.ts to avoid import cycles)
+// ---------------------------------------------------------------------------
+
+const VALID_DIRECTIONS: Direction[] = ['N', 'NE', 'SE', 'S', 'SW', 'NW'];
+
+function isValidDirection(d: string): d is Direction {
+  return VALID_DIRECTIONS.includes(d as Direction);
+}
+
+function jsonResult(data: unknown) {
+  return { content: [{ type: 'text' as const, text: JSON.stringify(data, null, 2) }] };
+}
+
+function errorResult(message: string) {
+  return { content: [{ type: 'text' as const, text: JSON.stringify({ error: message }) }], isError: true as const };
+}
+
+// ---------------------------------------------------------------------------
+// Per-agent MCP server factory
+// ---------------------------------------------------------------------------
+
+export type GameResolver = (agentId: string) => GameManager | null;
+export type LobbyResolver = (agentId: string) => EngineLobbyManager | null;
+export type MoveCallback = (gameId: string, agentId: string) => void;
+
+/**
+ * Create a new McpServer with all game/lobby tools scoped to agentId.
+ * We use resolver functions so the server can dynamically find the
+ * correct game/lobby even if it changes after registration.
+ */
+function createAgentMcpServer(
+  agentId: string,
+  resolveGame: GameResolver,
+  resolveLobby: LobbyResolver,
+  onMoveSubmitted?: MoveCallback,
+): McpServer {
+  const server = new McpServer({
+    name: `capture-the-lobster-${agentId}`,
+    version: '0.1.0',
+  });
+
+  // ==================== Lobby Phase Tools ====================
+
+  server.tool(
+    'get_lobby',
+    'Get the current lobby state: connected agents, teams, chat messages.',
+    {},
+    async () => {
+      const lobby = resolveLobby(agentId);
+      if (!lobby) return errorResult('No lobby available.');
+      return jsonResult(lobby.getLobbyState(agentId));
+    },
+  );
+
+  server.tool(
+    'lobby_chat',
+    'Send a public chat message visible to all agents in the lobby.',
+    { message: z.string().describe('The message to send to the lobby chat') },
+    async ({ message }) => {
+      const lobby = resolveLobby(agentId);
+      if (!lobby) return errorResult('No lobby available.');
+      if (lobby.phase !== 'forming') return errorResult('Lobby chat is only available during the forming phase.');
+      lobby.lobbyChat(agentId, message);
+      return jsonResult({ success: true });
+    },
+  );
+
+  server.tool(
+    'propose_team',
+    'Invite another agent to form a team with you.',
+    { agentId: z.string().describe('The ID of the agent you want to invite to your team') },
+    async ({ agentId: targetAgentId }) => {
+      const lobby = resolveLobby(agentId);
+      if (!lobby) return errorResult('No lobby available.');
+      if (lobby.phase !== 'forming') return errorResult('Team proposals are only available during the forming phase.');
+      const result = lobby.proposeTeam(agentId, targetAgentId);
+      if (!result.success) return errorResult(result.error ?? 'Failed to propose team.');
+      return jsonResult({ success: true, teamId: result.teamId });
+    },
+  );
+
+  server.tool(
+    'accept_team',
+    'Accept an invitation to join a team.',
+    { teamId: z.string().describe('The ID of the team invitation to accept') },
+    async ({ teamId }) => {
+      const lobby = resolveLobby(agentId);
+      if (!lobby) return errorResult('No lobby available.');
+      if (lobby.phase !== 'forming') return errorResult('Team acceptance is only available during the forming phase.');
+      const result = lobby.acceptTeam(agentId, teamId);
+      if (!result.success) return errorResult(result.error ?? 'Failed to accept team.');
+      return jsonResult({ success: true });
+    },
+  );
+
+  // ==================== Pre-Game Phase Tools ====================
+
+  server.tool(
+    'choose_class',
+    'Choose your unit class for the game: rogue (speed 3), knight (speed 2), or mage (speed 1, range 2).',
+    { class: z.enum(['rogue', 'knight', 'mage']).describe('The unit class to play as') },
+    async (args) => {
+      const lobby = resolveLobby(agentId);
+      if (!lobby) return errorResult('No lobby available.');
+      if (lobby.phase !== 'pre_game') return errorResult('Class selection is only available during the pre-game phase.');
+      const unitClass = args['class'] as UnitClass;
+      const result = lobby.chooseClass(agentId, unitClass);
+      if (!result.success) return errorResult(result.error ?? 'Failed to choose class.');
+      return jsonResult({ success: true, class: unitClass });
+    },
+  );
+
+  server.tool(
+    'get_team_state',
+    'Get your team\'s current composition and readiness status.',
+    {},
+    async () => {
+      const lobby = resolveLobby(agentId);
+      if (!lobby) return errorResult('No lobby available.');
+      const teamState = lobby.getTeamState(agentId);
+      if (!teamState) return errorResult('You are not on a team yet.');
+      return jsonResult(teamState);
+    },
+  );
+
+  // ==================== Game Phase Tools ====================
+
+  server.tool(
+    'get_game_state',
+    'Get the current game state from your perspective (fog of war applied).',
+    {},
+    async () => {
+      const game = resolveGame(agentId);
+      if (!game) return errorResult('No game in progress.');
+      if (game.phase === 'finished') {
+        const state = game.getStateForAgent(agentId);
+        return jsonResult({ ...state, winner: game.winner });
+      }
+      try {
+        const state = game.getStateForAgent(agentId);
+        return jsonResult(state);
+      } catch (err) {
+        return errorResult(err instanceof Error ? err.message : 'Failed to get game state.');
+      }
+    },
+  );
+
+  server.tool(
+    'submit_move',
+    'Submit your movement path for this turn. Array of directions: N, NE, SE, S, SW, NW. Empty array to stay put.',
+    { path: z.array(z.string()).describe('Array of direction strings, e.g. ["N", "NE", "N"]') },
+    async ({ path }) => {
+      const game = resolveGame(agentId);
+      if (!game) return errorResult('No game in progress.');
+      if (game.phase !== 'in_progress') return errorResult('Cannot submit moves — game phase is: ' + game.phase);
+
+      for (const dir of path) {
+        if (!isValidDirection(dir)) {
+          return errorResult(`Invalid direction "${dir}". Valid: ${VALID_DIRECTIONS.join(', ')}`);
+        }
+      }
+
+      const directions = path as Direction[];
+      const result = game.submitMove(agentId, directions);
+      if (!result.success) return errorResult(result.error ?? 'Failed to submit move.');
+
+      // Notify turn loop that a move was submitted
+      if (onMoveSubmitted) {
+        onMoveSubmitted(game.gameId, agentId);
+      }
+
+      return jsonResult({ success: true, path: directions });
+    },
+  );
+
+  server.tool(
+    'team_chat',
+    'Send a private message to your teammates.',
+    { message: z.string().describe('The message to send to your team') },
+    async ({ message }) => {
+      const game = resolveGame(agentId);
+      if (!game) return errorResult('No game in progress.');
+      if (game.phase !== 'in_progress') return errorResult('Team chat is only available during the game.');
+      game.submitChat(agentId, message);
+      return jsonResult({ success: true });
+    },
+  );
+
+  server.tool(
+    'get_team_messages',
+    'Get team chat messages, optionally filtered by turn.',
+    { sinceTurn: z.number().optional().describe('Only return messages from this turn onward.') },
+    async ({ sinceTurn }) => {
+      const game = resolveGame(agentId);
+      if (!game) return errorResult('No game in progress.');
+      const messages = game.getTeamMessages(agentId, sinceTurn);
+      return jsonResult({ messages });
+    },
+  );
+
+  return server;
+}
+
+// ---------------------------------------------------------------------------
+// Session management
+// ---------------------------------------------------------------------------
+
+interface MCPSession {
+  transport: StreamableHTTPServerTransport;
+  server: McpServer;
+  agentId: string;
+}
+
+/** Active MCP sessions keyed by MCP session ID */
+const sessions = new Map<string, MCPSession>();
+
+// ---------------------------------------------------------------------------
+// Express route handlers
+// ---------------------------------------------------------------------------
+
+/**
+ * Mount the MCP Streamable HTTP endpoint on an existing Express app.
+ *
+ * @param app - Express app (typed as `any` per project convention)
+ * @param resolveGame - function to find a GameManager for an agentId
+ * @param resolveLobby - function to find a LobbyManager for an agentId
+ * @param onMoveSubmitted - callback when an external agent submits a move
+ */
+export function mountMcpEndpoint(
+  app: any,
+  resolveGame: GameResolver,
+  resolveLobby: LobbyResolver,
+  onMoveSubmitted?: MoveCallback,
+): void {
+
+  // Helper: extract token from Authorization header
+  function extractToken(req: any): string | null {
+    const authHeader = req.headers?.['authorization'] as string | undefined;
+    if (!authHeader?.startsWith('Bearer ')) return null;
+    return authHeader.slice(7);
+  }
+
+  // Helper: resolve agentId from token
+  function resolveAgent(req: any): TokenEntry | null {
+    const token = extractToken(req);
+    if (!token) return null;
+    return tokenRegistry.get(token) ?? null;
+  }
+
+  // POST /mcp — main MCP endpoint
+  app.post('/mcp', async (req: any, res: any) => {
+    const sessionId = req.headers['mcp-session-id'] as string | undefined;
+
+    try {
+      // Existing session?
+      if (sessionId && sessions.has(sessionId)) {
+        const session = sessions.get(sessionId)!;
+        await session.transport.handleRequest(req, res, req.body);
+        return;
+      }
+
+      // New initialization request — requires Bearer token
+      if (!sessionId && isInitializeRequest(req.body)) {
+        const entry = resolveAgent(req);
+        if (!entry) {
+          res.status(401).json({
+            jsonrpc: '2.0',
+            error: { code: -32000, message: 'Unauthorized: valid Bearer token required' },
+            id: req.body?.id ?? null,
+          });
+          return;
+        }
+
+        const agentId = entry.agentId;
+        const mcpServer = createAgentMcpServer(agentId, resolveGame, resolveLobby, onMoveSubmitted);
+
+        const transport = new StreamableHTTPServerTransport({
+          sessionIdGenerator: () => crypto.randomUUID(),
+          onsessioninitialized: (sid: string) => {
+            sessions.set(sid, { transport, server: mcpServer, agentId });
+            console.log(`[MCP] Session ${sid} initialized for agent ${agentId}`);
+          },
+        });
+
+        transport.onclose = () => {
+          const sid = transport.sessionId;
+          if (sid && sessions.has(sid)) {
+            console.log(`[MCP] Session ${sid} closed for agent ${sessions.get(sid)!.agentId}`);
+            sessions.delete(sid);
+          }
+        };
+
+        await mcpServer.connect(transport);
+        await transport.handleRequest(req, res, req.body);
+        return;
+      }
+
+      // Bad request
+      res.status(400).json({
+        jsonrpc: '2.0',
+        error: { code: -32000, message: 'Bad Request: no valid session ID provided' },
+        id: null,
+      });
+    } catch (error) {
+      console.error('[MCP] Error handling request:', error);
+      if (!res.headersSent) {
+        res.status(500).json({
+          jsonrpc: '2.0',
+          error: { code: -32603, message: 'Internal server error' },
+          id: null,
+        });
+      }
+    }
+  });
+
+  // GET /mcp — SSE stream for server-initiated messages
+  app.get('/mcp', async (req: any, res: any) => {
+    const sessionId = req.headers['mcp-session-id'] as string | undefined;
+    if (!sessionId || !sessions.has(sessionId)) {
+      res.status(400).send('Invalid or missing session ID');
+      return;
+    }
+    const session = sessions.get(sessionId)!;
+    await session.transport.handleRequest(req, res);
+  });
+
+  // DELETE /mcp — session termination
+  app.delete('/mcp', async (req: any, res: any) => {
+    const sessionId = req.headers['mcp-session-id'] as string | undefined;
+    if (!sessionId || !sessions.has(sessionId)) {
+      res.status(400).send('Invalid or missing session ID');
+      return;
+    }
+    const session = sessions.get(sessionId)!;
+    await session.transport.handleRequest(req, res);
+  });
+
+  console.log('[MCP] Streamable HTTP endpoint mounted at /mcp');
+}
+
+// ---------------------------------------------------------------------------
+// Token generation helper
+// ---------------------------------------------------------------------------
+
+export function generateToken(entry: TokenEntry): string {
+  const token = `ctlob_${crypto.randomUUID().replace(/-/g, '')}`;
+  tokenRegistry.set(token, entry);
+  return token;
+}
+
+// ---------------------------------------------------------------------------
+// Cleanup
+// ---------------------------------------------------------------------------
+
+export async function closeAllMcpSessions(): Promise<void> {
+  for (const [sid, session] of sessions) {
+    try {
+      await session.transport.close();
+    } catch {
+      // ignore
+    }
+    sessions.delete(sid);
+  }
+}

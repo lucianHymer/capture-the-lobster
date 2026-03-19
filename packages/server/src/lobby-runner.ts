@@ -118,17 +118,21 @@ export class LobbyRunner {
   private abortController: AbortController;
   private botCount: number;
   private teamSize: number;
+  /** Number of player slots reserved for external MCP agents (rest are bots) */
+  private externalSlotCount: number;
 
   constructor(
     teamSize: number = 2,
     timeoutMs: number = 120000,
     callbacks: LobbyRunnerCallbacks,
+    externalSlotCount: number = 0,
   ) {
     this.lobby = new LobbyManager(undefined, teamSize);
     this.callbacks = callbacks;
     this.timeoutMs = timeoutMs;
     this.teamSize = teamSize;
-    this.botCount = teamSize * 2; // 2 teams
+    this.externalSlotCount = Math.min(externalSlotCount, teamSize * 2);
+    this.botCount = teamSize * 2 - this.externalSlotCount; // fill remaining slots with bots
     this.abortController = new AbortController();
   }
 

@@ -22,10 +22,18 @@ import {
   getUnitVision,
   hexToString,
   CLASS_VISION,
+  LobbyManager as EngineLobbyManager,
 } from '@lobster/engine';
 import { EloTracker } from './elo.js';
 import { runAllBotsTurn, createBotSessions, BotSession } from './claude-bot.js';
 import { LobbyRunner, LobbyRunnerState } from './lobby-runner.js';
+import {
+  mountMcpEndpoint,
+  generateToken,
+  tokenRegistry,
+  closeAllMcpSessions,
+  TokenEntry,
+} from './mcp-http.js';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -78,18 +86,30 @@ export interface SpectatorState {
   turnStartedAt: number;  // epoch ms
 }
 
+export interface ExternalSlot {
+  token: string;
+  agentId: string;
+  connected: boolean;
+}
+
 export interface GameRoom {
   game: GameManager;
   spectators: Set<WebSocket>;
   stateHistory: SpectatorState[];   // indexed by turn
   spectatorDelay: number;           // turns of delay (default 5)
-  turnTimer: ReturnType<typeof setInterval> | null;
+  turnTimer: ReturnType<typeof setTimeout> | null;
+  deadlineTimer: ReturnType<typeof setTimeout> | null;
   botHandles: string[];             // handles of bot players in this room
   botMeta: { id: string; unitClass: UnitClass; team: 'A' | 'B' }[];
   botSessions: BotSession[];
   finished: boolean;
   useClaudeBots: boolean;
   turnInProgress: boolean;
+  // External agent slots
+  externalSlots: Map<string, ExternalSlot>;  // agentId -> slot info
+  // Event-driven turn: resolve callback for early completion
+  turnResolve: (() => void) | null;
+  turnTimeoutMs: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -239,6 +259,9 @@ export interface LobbyRoom {
   runner: LobbyRunner;
   spectators: Set<WebSocket>;
   state: LobbyRunnerState | null;
+  // External agent slots for this lobby
+  externalSlots: Map<string, ExternalSlot>;
+  lobbyManager: EngineLobbyManager | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -254,6 +277,11 @@ export class GameServer {
 
   readonly games: Map<string, GameRoom> = new Map();
   readonly lobbies: Map<string, LobbyRoom> = new Map();
+
+  /** Maps external agentId -> gameId for game resolution */
+  private agentToGame: Map<string, string> = new Map();
+  /** Maps external agentId -> lobbyId for lobby resolution */
+  private agentToLobby: Map<string, string> = new Map();
 
   constructor(port?: number) {
     this.app = express();
@@ -276,6 +304,47 @@ export class GameServer {
 
     this.setupRoutes();
     this.setupWebSocket();
+
+    // Mount the MCP Streamable HTTP endpoint
+    mountMcpEndpoint(
+      this.app,
+      // Game resolver: find the GameManager for an agentId
+      (agentId: string) => {
+        const gameId = this.agentToGame.get(agentId);
+        if (!gameId) return null;
+        const room = this.games.get(gameId);
+        return room?.game ?? null;
+      },
+      // Lobby resolver: find the LobbyManager for an agentId
+      (agentId: string) => {
+        const lobbyId = this.agentToLobby.get(agentId);
+        if (!lobbyId) return null;
+        const lobbyRoom = this.lobbies.get(lobbyId);
+        return lobbyRoom?.lobbyManager ?? null;
+      },
+      // Move callback: check if all moves submitted for early turn resolution
+      (gameId: string, agentId: string) => {
+        this.onMoveSubmitted(gameId, agentId);
+      },
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // Event-driven turn: callback when any agent submits a move
+  // ---------------------------------------------------------------------------
+
+  private onMoveSubmitted(gameId: string, agentId: string): void {
+    const room = this.games.get(gameId);
+    if (!room || room.finished) return;
+
+    console.log(`[Turn] Move submitted by ${agentId} for game ${gameId}`);
+
+    // Check if all moves are in (both bots and external agents)
+    if (room.game.allMovesSubmitted() && room.turnResolve) {
+      console.log(`[Turn] All moves submitted for game ${gameId} — resolving early`);
+      room.turnResolve();
+      room.turnResolve = null;
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -296,6 +365,10 @@ export class GameServer {
         preGame: room.state?.preGame ?? null,
         gameId: room.state?.gameId ?? null,
         spectators: room.spectators.size,
+        externalSlots: Array.from(room.externalSlots.values()).map((s) => ({
+          agentId: s.agentId,
+          connected: s.connected,
+        })),
       }));
       res.json(list);
     });
@@ -305,15 +378,98 @@ export class GameServer {
       const room = this.lobbies.get(req.params.id);
       if (!room) return res.status(404).json({ error: 'Lobby not found' });
       if (!room.state) return res.json({ phase: 'forming' });
-      res.json(room.state);
+      res.json({
+        ...room.state,
+        externalSlots: Array.from(room.externalSlots.values()).map((s) => ({
+          agentId: s.agentId,
+          connected: s.connected,
+        })),
+      });
     });
 
-    // Start a lobby game with Claude bots
+    // Start a lobby game with Claude bots (no external slots)
     router.post('/lobbies/start', (req, res) => {
       const teamSize = (req.body?.teamSize as number) || 2;
       const timeoutMs = (req.body?.timeoutMs as number) || 120000;
       const { lobbyId } = this.createLobbyGame(teamSize, timeoutMs);
       res.status(201).json({ lobbyId });
+    });
+
+    // Create a lobby with external slots
+    router.post('/lobbies/create', (req, res) => {
+      const teamSize = (req.body?.teamSize as number) || 2;
+      const externalSlots = (req.body?.externalSlots as number) || 1;
+      const timeoutMs = (req.body?.timeoutMs as number) || 120000;
+      const { lobbyId } = this.createLobbyGame(teamSize, timeoutMs, externalSlots);
+      res.status(201).json({ lobbyId, externalSlots });
+    });
+
+    // Register an external agent for a lobby
+    router.post('/register', (req, res) => {
+      const lobbyId = req.body?.lobbyId as string | undefined;
+      const gameId = req.body?.gameId as string | undefined;
+
+      if (!lobbyId && !gameId) {
+        return res.status(400).json({ error: 'lobbyId or gameId required' });
+      }
+
+      // For lobby registration
+      if (lobbyId) {
+        const lobbyRoom = this.lobbies.get(lobbyId);
+        if (!lobbyRoom) {
+          return res.status(404).json({ error: 'Lobby not found' });
+        }
+
+        // Create a new agent ID
+        const agentId = `ext_${crypto.randomUUID().slice(0, 8)}`;
+        const token = generateToken({ agentId, lobbyId });
+
+        // Track the slot
+        lobbyRoom.externalSlots.set(agentId, {
+          token,
+          agentId,
+          connected: false,
+        });
+
+        // Map agent -> lobby for MCP resolver
+        this.agentToLobby.set(agentId, lobbyId);
+
+        // Add agent to the lobby manager if available
+        if (lobbyRoom.lobbyManager) {
+          lobbyRoom.lobbyManager.addAgent({
+            id: agentId,
+            handle: `External-${agentId.slice(4)}`,
+            elo: 1000,
+          });
+        }
+
+        const mcpUrl = `/mcp`;
+        console.log(`[Register] External agent ${agentId} registered for lobby ${lobbyId}`);
+        return res.status(201).json({ token, agentId, mcpUrl, lobbyId });
+      }
+
+      // For direct game registration (spectating/joining mid-game)
+      if (gameId) {
+        const gameRoom = this.games.get(gameId);
+        if (!gameRoom) {
+          return res.status(404).json({ error: 'Game not found' });
+        }
+
+        const agentId = `ext_${crypto.randomUUID().slice(0, 8)}`;
+        const token = generateToken({ agentId, gameId });
+
+        gameRoom.externalSlots.set(agentId, {
+          token,
+          agentId,
+          connected: false,
+        });
+
+        this.agentToGame.set(agentId, gameId);
+
+        const mcpUrl = `/mcp`;
+        console.log(`[Register] External agent ${agentId} registered for game ${gameId}`);
+        return res.status(201).json({ token, agentId, mcpUrl, gameId });
+      }
     });
 
     // List active games
@@ -327,6 +483,7 @@ export class GameServer {
           B: room.game.units.filter((u) => u.team === 'B').map((u) => u.id),
         },
         spectators: room.spectators.size,
+        externalAgents: room.externalSlots.size,
       }));
       res.json(list);
     });
@@ -386,10 +543,12 @@ export class GameServer {
 
     this.app.use('/api', router);
 
-    // SPA catch-all: serve index.html for any non-API route
+    // SPA catch-all: serve index.html for any non-API, non-MCP route
     const __dirname2 = path.dirname(fileURLToPath(import.meta.url));
     const indexPath = path.resolve(__dirname2, '../../web/dist/index.html');
     this.app.get('*', (_req: any, res: any) => {
+      // Don't serve index.html for /mcp requests
+      if (_req.path === '/mcp') return res.status(404).send('Not found');
       res.sendFile(indexPath);
     });
   }
@@ -521,67 +680,102 @@ export class GameServer {
       stateHistory: [initialState],
       spectatorDelay: 0,  // No delay for beta testing
       turnTimer: null,
+      deadlineTimer: null,
       botHandles,
       botMeta: players,
       botSessions: createBotSessions(players),
       finished: false,
       useClaudeBots: this.useClaudeBots,
       turnInProgress: false,
+      externalSlots: new Map(),
+      turnResolve: null,
+      turnTimeoutMs: 30000,
     };
 
     this.games.set(gameId, room);
 
-    // Start the auto-play turn loop
-    // Claude bots need more time per turn (API calls), heuristic bots are instant
-    const turnInterval = room.useClaudeBots ? 8000 : 2000;
-    room.turnTimer = setInterval(() => {
-      this.runTurnLoop(gameId).catch((err) => {
-        console.error(`Turn loop error for ${gameId}:`, err);
-      });
-    }, turnInterval);
+    // Start the event-driven turn loop
+    this.startNextTurn(gameId);
 
     return { gameId, game };
   }
 
   // ---------------------------------------------------------------------------
-  // Turn loop — submit random bot moves, resolve, broadcast
+  // Event-driven turn loop
   // ---------------------------------------------------------------------------
 
-  async runTurnLoop(gameId: string): Promise<void> {
+  /**
+   * Start a new turn: kick off bots, set deadline timer, wait for all moves
+   * or deadline, then resolve and start next turn.
+   */
+  private startNextTurn(gameId: string): void {
     const room = this.games.get(gameId);
-    if (!room || room.finished || room.turnInProgress) return;
-    room.turnInProgress = true;
+    if (!room || room.finished) return;
 
-    const { game, botHandles } = room;
+    const { game } = room;
 
+    // Check if game is over
     if (game.isGameOver()) {
-      // Clean up
-      if (room.turnTimer) clearInterval(room.turnTimer);
-      room.turnTimer = null;
-      room.finished = true;
-      room.turnInProgress = false;
-
-      // Final broadcast with no delay so spectators see the result
-      const finalState = buildSpectatorState(game);
-      room.stateHistory.push(finalState);
-      const msg = JSON.stringify({ type: 'game_over', data: finalState });
-      for (const ws of room.spectators) {
-        if (ws.readyState === WebSocket.OPEN) {
-          ws.send(msg);
-        }
-      }
+      this.finishGame(room);
       return;
     }
 
-    // Hard 30s turn deadline — any agent that hasn't submitted gets an empty move
-    const TURN_TIMEOUT_MS = 30000;
+    room.turnInProgress = true;
+
+    console.log(`[Turn] Starting turn ${game.turn} for game ${gameId}`);
+
+    // Create a promise that resolves when all moves are submitted
+    const allMovesPromise = new Promise<void>((resolve) => {
+      room.turnResolve = resolve;
+    });
+
+    // Kick off in-process bots (async)
+    const botPromise = this.runBots(room);
+
+    // Set deadline timer
+    const deadlinePromise = new Promise<void>((resolve) => {
+      room.deadlineTimer = setTimeout(() => {
+        console.log(`[Turn] Deadline hit for turn ${game.turn} in game ${gameId}`);
+        resolve();
+      }, room.turnTimeoutMs);
+    });
+
+    // Wait for either: all moves submitted, or deadline
+    Promise.race([
+      // All moves submitted (bots + external agents)
+      botPromise.then(() => {
+        // After bots finish, check if all moves are in
+        if (game.allMovesSubmitted()) {
+          // Clear the resolve so it doesn't fire again
+          room.turnResolve = null;
+          return;
+        }
+        // If not all in, wait for external agents or deadline
+        return allMovesPromise;
+      }),
+      deadlinePromise,
+    ]).then(() => {
+      this.resolveTurnAndContinue(gameId);
+    }).catch((err) => {
+      console.error(`[Turn] Error in turn loop for ${gameId}:`, err);
+      room.turnInProgress = false;
+    });
+  }
+
+  /**
+   * Run in-process bots for the current turn.
+   */
+  private async runBots(room: GameRoom): Promise<void> {
+    const { game, botHandles } = room;
 
     if (room.useClaudeBots) {
+      // Claude bots with their own timeout
       await Promise.race([
         runAllBotsTurn(game, room.botSessions, game.turn),
-        new Promise<void>((resolve) => setTimeout(resolve, TURN_TIMEOUT_MS)),
+        new Promise<void>((resolve) => setTimeout(resolve, room.turnTimeoutMs - 2000)),
       ]);
     } else {
+      // Heuristic bots — instant random moves
       for (const botId of botHandles) {
         const unit = game.units.find((u) => u.id === botId);
         if (!unit || !unit.alive) continue;
@@ -590,11 +784,43 @@ export class GameServer {
       }
     }
 
-    // Force empty moves for anyone who didn't submit within the deadline
+    // Submit empty moves for bots that didn't submit
     for (const botId of botHandles) {
       if (!game.moveSubmissions.has(botId)) {
         const unit = game.units.find((u) => u.id === botId);
         if (unit?.alive) game.submitMove(botId, []);
+      }
+    }
+
+    // After bot moves, check if all moves are now in
+    if (game.allMovesSubmitted() && room.turnResolve) {
+      room.turnResolve();
+      room.turnResolve = null;
+    }
+  }
+
+  /**
+   * Resolve the current turn and start the next one.
+   */
+  private resolveTurnAndContinue(gameId: string): void {
+    const room = this.games.get(gameId);
+    if (!room || room.finished) return;
+
+    const { game } = room;
+
+    // Clear timers
+    if (room.deadlineTimer) {
+      clearTimeout(room.deadlineTimer);
+      room.deadlineTimer = null;
+    }
+    room.turnResolve = null;
+
+    // Force empty moves for any agent (bot or external) that hasn't submitted
+    const allPlayerIds = game.units.map((u) => u.id);
+    for (const playerId of allPlayerIds) {
+      if (!game.moveSubmissions.has(playerId)) {
+        const unit = game.units.find((u) => u.id === playerId);
+        if (unit?.alive) game.submitMove(playerId, []);
       }
     }
 
@@ -605,9 +831,48 @@ export class GameServer {
     const state = buildSpectatorState(game);
     room.stateHistory.push(state);
 
-    // Broadcast delayed state to spectators
+    // Broadcast to spectators
     this.broadcastState(room);
+
     room.turnInProgress = false;
+
+    // Check if game is over
+    if (game.isGameOver()) {
+      this.finishGame(room);
+      return;
+    }
+
+    // Small delay before starting next turn (gives spectators time to see state)
+    const nextTurnDelay = room.useClaudeBots ? 1000 : 500;
+    room.turnTimer = setTimeout(() => {
+      this.startNextTurn(gameId);
+    }, nextTurnDelay);
+  }
+
+  /**
+   * Handle game over: clean up, broadcast final state.
+   */
+  private finishGame(room: GameRoom): void {
+    if (room.finished) return;
+    room.finished = true;
+
+    // Clear timers
+    if (room.turnTimer) { clearTimeout(room.turnTimer); room.turnTimer = null; }
+    if (room.deadlineTimer) { clearTimeout(room.deadlineTimer); room.deadlineTimer = null; }
+    room.turnResolve = null;
+    room.turnInProgress = false;
+
+    // Final broadcast
+    const finalState = buildSpectatorState(room.game);
+    room.stateHistory.push(finalState);
+    const msg = JSON.stringify({ type: 'game_over', data: finalState });
+    for (const ws of room.spectators) {
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.send(msg);
+      }
+    }
+
+    console.log(`[Game] Game ${room.game.gameId} finished. Winner: ${room.game.winner ?? 'draw'}`);
   }
 
   // ---------------------------------------------------------------------------
@@ -625,12 +890,13 @@ export class GameServer {
   }
 
   // ---------------------------------------------------------------------------
-  // Create a lobby game with Claude bots
+  // Create a lobby game with Claude bots (and optional external slots)
   // ---------------------------------------------------------------------------
 
   createLobbyGame(
     teamSize: number = 2,
     timeoutMs: number = 120000,
+    externalSlotCount: number = 0,
   ): { lobbyId: string } {
     const runner = new LobbyRunner(teamSize, timeoutMs, {
       onStateChange: (state) => {
@@ -643,13 +909,15 @@ export class GameServer {
       onGameCreated: (gameId, teamPlayers) => {
         this.createGameFromLobby(gameId, teamPlayers);
       },
-    });
+    }, externalSlotCount);
 
     const lobbyId = runner.lobby.lobbyId;
     const lobbyRoom: LobbyRoom = {
       runner,
       spectators: new Set(),
       state: null,
+      externalSlots: new Map(),
+      lobbyManager: runner.lobby,
     };
     this.lobbies.set(lobbyId, lobbyRoom);
 
@@ -670,7 +938,29 @@ export class GameServer {
     teamPlayers: { id: string; team: 'A' | 'B'; unitClass: UnitClass }[],
   ): void {
     const players = teamPlayers;
-    const botHandles = players.map((p) => p.id);
+    const botHandles: string[] = [];
+    const externalSlots = new Map<string, ExternalSlot>();
+
+    // Separate bot handles from external agent handles
+    for (const p of players) {
+      if (p.id.startsWith('ext_')) {
+        // External agent — look up their token
+        for (const [, entry] of tokenRegistry) {
+          if (entry.agentId === p.id) {
+            entry.gameId = gameId;
+            break;
+          }
+        }
+        this.agentToGame.set(p.id, gameId);
+        externalSlots.set(p.id, {
+          token: '',
+          agentId: p.id,
+          connected: true,
+        });
+      } else {
+        botHandles.push(p.id);
+      }
+    }
 
     const gameMap = generateMap({ radius: 5 });
     const game = new GameManager(gameId, gameMap, players);
@@ -683,25 +973,24 @@ export class GameServer {
       stateHistory: [initialState],
       spectatorDelay: 0,
       turnTimer: null,
+      deadlineTimer: null,
       botHandles,
       botMeta: players,
-      botSessions: createBotSessions(players),
+      botSessions: createBotSessions(players.filter((p) => !p.id.startsWith('ext_'))),
       finished: false,
       useClaudeBots: this.useClaudeBots,
       turnInProgress: false,
+      externalSlots,
+      turnResolve: null,
+      turnTimeoutMs: 30000,
     };
 
     this.games.set(gameId, room);
 
-    // Start the turn loop
-    const turnInterval = room.useClaudeBots ? 8000 : 2000;
-    room.turnTimer = setInterval(() => {
-      this.runTurnLoop(gameId).catch((err) => {
-        console.error(`Turn loop error for ${gameId}:`, err);
-      });
-    }, turnInterval);
+    // Start the event-driven turn loop
+    this.startNextTurn(gameId);
 
-    console.log(`Game ${gameId} created from lobby with ${players.length} players`);
+    console.log(`Game ${gameId} created from lobby with ${players.length} players (${externalSlots.size} external)`);
   }
 
   // ---------------------------------------------------------------------------
@@ -722,13 +1011,15 @@ export class GameServer {
   // Graceful shutdown
   close(): void {
     for (const [, room] of this.games) {
-      if (room.turnTimer) clearInterval(room.turnTimer);
+      if (room.turnTimer) clearTimeout(room.turnTimer);
+      if (room.deadlineTimer) clearTimeout(room.deadlineTimer);
       for (const ws of room.spectators) ws.close();
     }
     for (const [, lobbyRoom] of this.lobbies) {
       lobbyRoom.runner.abort();
       for (const ws of lobbyRoom.spectators) ws.close();
     }
+    closeAllMcpSessions().catch(() => {});
     this.wss.close();
     this.server.close();
     this.elo.close();
