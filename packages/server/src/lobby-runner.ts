@@ -43,7 +43,7 @@ export interface LobbyRunnerState {
 
 export interface LobbyRunnerCallbacks {
   onStateChange: (state: LobbyRunnerState) => void;
-  onGameCreated: (gameId: string, teamPlayers: { id: string; team: 'A' | 'B'; unitClass: UnitClass }[]) => void;
+  onGameCreated: (gameId: string, teamPlayers: { id: string; team: 'A' | 'B'; unitClass: UnitClass }[], handles: Record<string, string>) => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -249,12 +249,18 @@ export class LobbyRunner {
         });
       }
 
+      // Build handle map from lobby agents
+      const handles: Record<string, string> = {};
+      for (const [id, agent] of this.lobby.agents) {
+        handles[id] = agent.handle;
+      }
+
       const game = this.lobby.createGame();
       this.gameId = game.gameId;
       this.phase = 'game';
       this.emitState();
 
-      this.callbacks.onGameCreated(game.gameId, teamPlayers);
+      this.callbacks.onGameCreated(game.gameId, teamPlayers, handles);
     } catch (err: any) {
       console.error('Lobby runner error:', err);
       this.phase = 'failed';

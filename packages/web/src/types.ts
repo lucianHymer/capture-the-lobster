@@ -26,6 +26,7 @@ export interface ChatMessage {
   from: string;
   message: string;
   turn: number;
+  team?: 'A' | 'B';
 }
 
 export interface SpectatorGameState {
@@ -41,4 +42,6 @@ export interface SpectatorGameState {
   flagB: { status: string };
   winner?: 'A' | 'B' | null;
   mapRadius: number;
+  /** Maps agent IDs to display names */
+  handles?: Record<string, string>;
 }

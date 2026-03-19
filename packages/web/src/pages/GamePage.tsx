@@ -86,6 +86,7 @@ function mapServerState(raw: any): SpectatorGameState | null {
     visibleB: new Set(data.visibleB ?? []),
     turnTimeoutMs: data.turnTimeoutMs ?? 30000,
     turnStartedAt: data.turnStartedAt ?? Date.now(),
+    handles: data.handles ?? {},
   };
 }
 
@@ -158,22 +159,28 @@ function KillFeed({ kills }: { kills: KillEvent[] }) {
 function ChatLog({
   messages,
   team,
+  handles,
 }: {
   messages: ChatMessage[];
   team: 'A' | 'B';
+  handles?: Record<string, string>;
 }) {
-  const teamColor = team === 'A' ? 'text-blue-400' : 'text-red-400';
   return (
     <div className="flex flex-col gap-1">
       {messages.length === 0 && (
         <p className="text-gray-600 text-xs italic">No messages</p>
       )}
-      {messages.map((m, i) => (
-        <div key={i} className="text-xs">
-          <span className={`font-semibold ${teamColor}`}>{m.from}:</span>{' '}
-          <span className="text-gray-300">&ldquo;{m.message}&rdquo;</span>
-        </div>
-      ))}
+      {messages.map((m, i) => {
+        const msgTeam = m.team ?? team;
+        const teamColor = msgTeam === 'A' ? 'text-blue-400' : 'text-red-400';
+        const displayName = handles?.[m.from] ?? m.from;
+        return (
+          <div key={i} className="text-xs">
+            <span className={`font-semibold ${teamColor}`}>{displayName}:</span>{' '}
+            <span className="text-gray-300">&ldquo;{m.message}&rdquo;</span>
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -265,12 +272,13 @@ export default function GamePage() {
 
   const chatMessages =
     selectedTeam === 'A'
-      ? gameState.chatA
+      ? gameState.chatA.map((m) => ({ ...m, team: 'A' as const }))
       : selectedTeam === 'B'
-        ? gameState.chatB
-        : [...gameState.chatA, ...gameState.chatB].sort(
-            (a, b) => a.turn - b.turn,
-          );
+        ? gameState.chatB.map((m) => ({ ...m, team: 'B' as const }))
+        : [
+            ...gameState.chatA.map((m) => ({ ...m, team: 'A' as const })),
+            ...gameState.chatB.map((m) => ({ ...m, team: 'B' as const })),
+          ].sort((a, b) => a.turn - b.turn);
 
   const chatTeamLabel =
     selectedTeam === 'all' ? 'All Chat' : `Team ${selectedTeam} Chat`;
@@ -355,6 +363,7 @@ export default function GamePage() {
               <ChatLog
                 messages={chatMessages}
                 team={selectedTeam === 'all' ? 'A' : selectedTeam}
+                handles={gameState.handles}
               />
             </div>
           </div>

@@ -68,6 +68,23 @@ export default function HexGrid({
     return map;
   }, [tiles]);
 
+  // Build unit ID -> 1-based team index (e.g., first unit on team A = 1)
+  const unitTeamIndex = useMemo(() => {
+    const indexMap = new Map<string, number>();
+    const teamCounters: Record<string, number> = { A: 0, B: 0 };
+    for (const t of tiles) {
+      const allUnits = (t as any).units ?? (t.unit ? [t.unit] : []);
+      for (const u of allUnits) {
+        if (u.id && !indexMap.has(u.id)) {
+          const team = u.team ?? 'A';
+          teamCounters[team] = (teamCounters[team] ?? 0) + 1;
+          indexMap.set(u.id, teamCounters[team]);
+        }
+      }
+    }
+    return indexMap;
+  }, [tiles]);
+
   // Generate all hex positions in the map
   const allHexes = useMemo(() => {
     const hexes: { q: number; r: number }[] = [];
@@ -235,7 +252,7 @@ export default function HexGrid({
                       opacity={dim ? 0.3 : 1}
                       style={{ pointerEvents: 'none' }}
                     >
-                      {CLASS_LETTERS[u.unitClass]}
+                      {CLASS_LETTERS[u.unitClass]}{unitTeamIndex.get(u.id) ?? ''}
                     </text>
                     {u.carryingFlag && (
                       <text
@@ -264,7 +281,7 @@ export default function HexGrid({
                       opacity={dim ? 0.3 : 1}
                       style={{ pointerEvents: 'none' }}
                     >
-                      {CLASS_LETTERS[u.unitClass]}
+                      {CLASS_LETTERS[u.unitClass]}{unitTeamIndex.get(u.id) ?? ''}
                     </text>
                     {u.carryingFlag && (
                       <text

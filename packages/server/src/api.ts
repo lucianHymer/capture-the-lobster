@@ -84,6 +84,8 @@ export interface SpectatorState {
   visibleB: string[];  // hex keys visible to team B
   turnTimeoutMs: number;
   turnStartedAt: number;  // epoch ms
+  /** Maps agent IDs to display names (e.g. "agent_1" -> "Pinchy") */
+  handles: Record<string, string>;
 }
 
 export interface ExternalSlot {
@@ -110,13 +112,25 @@ export interface GameRoom {
   // Event-driven turn: resolve callback for early completion
   turnResolve: (() => void) | null;
   turnTimeoutMs: number;
+  /** Agent ID -> display name */
+  handleMap: Record<string, string>;
 }
+
+// ---------------------------------------------------------------------------
+// Bot display names (shared with lobby-runner)
+// ---------------------------------------------------------------------------
+
+const BOT_DISPLAY_NAMES = [
+  'Pinchy', 'Clawdia', 'Sheldon', 'Snappy',
+  'Bubbles', 'Coral', 'Neptune', 'Triton',
+  'Marina', 'Squidward', 'Barnacle', 'Anchovy',
+];
 
 // ---------------------------------------------------------------------------
 // Spectator state builder
 // ---------------------------------------------------------------------------
 
-function buildSpectatorState(game: GameManager): SpectatorState {
+function buildSpectatorState(game: GameManager, handles: Record<string, string> = {}): SpectatorState {
   const { map, units, flags, turn, phase, config, score } = game;
 
   // Build full tile array (no fog — spectators see everything)
@@ -234,6 +248,7 @@ function buildSpectatorState(game: GameManager): SpectatorState {
     visibleB: [...visibleB],
     turnTimeoutMs: 30000,
     turnStartedAt: Date.now(),
+    handles,
   };
 }
 
@@ -650,11 +665,15 @@ export class GameServer {
 
     const players: { id: string; team: 'A' | 'B'; unitClass: UnitClass }[] = [];
     const botHandles: string[] = [];
+    const handleMap: Record<string, string> = {};
 
     for (let i = 0; i < teamSize; i++) {
       const handleA = `bot_${i * 2 + 1}`;
       const handleB = `bot_${i * 2 + 2}`;
       botHandles.push(handleA, handleB);
+
+      handleMap[handleA] = BOT_DISPLAY_NAMES[(i * 2) % BOT_DISPLAY_NAMES.length];
+      handleMap[handleB] = BOT_DISPLAY_NAMES[(i * 2 + 1) % BOT_DISPLAY_NAMES.length];
 
       players.push({
         id: handleA,
@@ -672,7 +691,7 @@ export class GameServer {
     const game = new GameManager(gameId, gameMap, players);
 
     // Take initial snapshot
-    const initialState = buildSpectatorState(game);
+    const initialState = buildSpectatorState(game, handleMap);
 
     const room: GameRoom = {
       game,
@@ -690,6 +709,7 @@ export class GameServer {
       externalSlots: new Map(),
       turnResolve: null,
       turnTimeoutMs: 30000,
+      handleMap,
     };
 
     this.games.set(gameId, room);
@@ -828,7 +848,7 @@ export class GameServer {
     game.resolveTurn();
 
     // Snapshot current state
-    const state = buildSpectatorState(game);
+    const state = buildSpectatorState(game, room.handleMap);
     room.stateHistory.push(state);
 
     // Broadcast to spectators
@@ -863,7 +883,7 @@ export class GameServer {
     room.turnInProgress = false;
 
     // Final broadcast
-    const finalState = buildSpectatorState(room.game);
+    const finalState = buildSpectatorState(room.game, room.handleMap);
     room.stateHistory.push(finalState);
     const msg = JSON.stringify({ type: 'game_over', data: finalState });
     for (const ws of room.spectators) {
@@ -906,8 +926,8 @@ export class GameServer {
           this.broadcastLobbyState(lobbyRoom);
         }
       },
-      onGameCreated: (gameId, teamPlayers) => {
-        this.createGameFromLobby(gameId, teamPlayers);
+      onGameCreated: (gameId, teamPlayers, handles) => {
+        this.createGameFromLobby(gameId, teamPlayers, handles);
       },
     }, externalSlotCount);
 
@@ -936,10 +956,12 @@ export class GameServer {
   private createGameFromLobby(
     gameId: string,
     teamPlayers: { id: string; team: 'A' | 'B'; unitClass: UnitClass }[],
+    handles: Record<string, string> = {},
   ): void {
     const players = teamPlayers;
     const botHandles: string[] = [];
     const externalSlots = new Map<string, ExternalSlot>();
+    const handleMap: Record<string, string> = { ...handles };
 
     // Separate bot handles from external agent handles
     for (const p of players) {
@@ -965,7 +987,7 @@ export class GameServer {
     const gameMap = generateMap({ radius: 5 });
     const game = new GameManager(gameId, gameMap, players);
 
-    const initialState = buildSpectatorState(game);
+    const initialState = buildSpectatorState(game, handleMap);
 
     const room: GameRoom = {
       game,
@@ -983,6 +1005,7 @@ export class GameServer {
       externalSlots,
       turnResolve: null,
       turnTimeoutMs: 30000,
+      handleMap,
     };
 
     this.games.set(gameId, room);
