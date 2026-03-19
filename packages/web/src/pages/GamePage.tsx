@@ -160,10 +160,12 @@ function ChatLog({
   messages,
   team,
   handles,
+  unitLabels,
 }: {
   messages: ChatMessage[];
   team: 'A' | 'B';
   handles?: Record<string, string>;
+  unitLabels?: Record<string, string>;
 }) {
   return (
     <div className="flex flex-col gap-1">
@@ -173,7 +175,9 @@ function ChatLog({
       {messages.map((m, i) => {
         const msgTeam = m.team ?? team;
         const teamColor = msgTeam === 'A' ? 'text-blue-400' : 'text-red-400';
-        const displayName = handles?.[m.from] ?? m.from;
+        const name = handles?.[m.from] ?? m.from;
+        const label = unitLabels?.[m.from];
+        const displayName = label ? `${name} (${label})` : name;
         return (
           <div key={i} className="text-xs">
             <span className={`font-semibold ${teamColor}`}>{displayName}:</span>{' '}
@@ -270,6 +274,23 @@ export default function GamePage() {
     );
   }
 
+  // Build unit labels (e.g. "R1", "K2") from tile data so chat can reference map
+  const unitLabels: Record<string, string> = {};
+  const teamACounts: string[] = [];
+  const teamBCounts: string[] = [];
+  for (const tile of gameState.tiles) {
+    if (tile.unit) {
+      const classLetter = tile.unit.unitClass[0].toUpperCase();
+      if (tile.unit.team === 'A') {
+        teamACounts.push(tile.unit.id);
+        unitLabels[tile.unit.id] = `${classLetter}${teamACounts.length}`;
+      } else {
+        teamBCounts.push(tile.unit.id);
+        unitLabels[tile.unit.id] = `${classLetter}${teamBCounts.length}`;
+      }
+    }
+  }
+
   const chatMessages =
     selectedTeam === 'A'
       ? gameState.chatA.map((m) => ({ ...m, team: 'A' as const }))
@@ -364,6 +385,7 @@ export default function GamePage() {
                 messages={chatMessages}
                 team={selectedTeam === 'all' ? 'A' : selectedTeam}
                 handles={gameState.handles}
+                unitLabels={unitLabels}
               />
             </div>
           </div>

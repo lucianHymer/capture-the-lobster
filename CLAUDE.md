@@ -64,6 +64,22 @@ The server `tsconfig.json` uses `strict: false` and `noImplicitAny: false` becau
 ### Express type: `app` is typed as `any`
 In `api.ts`, `this.app` is typed as `any` because `express.Application` type doesn't resolve without `@types/express` properly installed.
 
+### Port stuck / EADDRINUSE when restarting server
+**Problem:** `fuser -k` and `sudo kill` often fail in this container — `kill` command isn't in the sudo PATH, and `fuser` doesn't always find the process.
+**Workaround:** Use Node to send signals:
+```bash
+sudo node -e "
+const fs = require('fs');
+fs.readdirSync('/proc').filter(d => /^\d+$/.test(d)).forEach(pid => {
+  try {
+    const cmd = fs.readFileSync('/proc/' + pid + '/cmdline', 'utf8');
+    if (cmd.includes('dist/index.js')) { process.kill(Number(pid), 'SIGKILL'); console.log('killed', pid); }
+  } catch {}
+});
+"
+```
+Wait 2 seconds for the socket to release, then start the new server.
+
 ## Environment
 
 - **Env var `USE_CLAUDE_BOTS`**: Set to `"false"` to disable Claude bots and use heuristic bots instead. Default: enabled.
