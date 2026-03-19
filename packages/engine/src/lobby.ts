@@ -258,6 +258,30 @@ export class LobbyManager {
       }
     }
 
+    // Merge incomplete teams together
+    const stillIncomplete = Array.from(this.teams.values())
+      .filter((t) => t.members.length < teamSize)
+      .sort((a, b) => b.members.length - a.members.length); // largest first
+
+    for (let i = 0; i < stillIncomplete.length; i++) {
+      const target = stillIncomplete[i];
+      if (target.members.length >= teamSize) continue;
+      // Try to absorb smaller teams
+      for (let j = i + 1; j < stillIncomplete.length; j++) {
+        const source = stillIncomplete[j];
+        if (source.members.length === 0) continue;
+        if (target.members.length + source.members.length <= teamSize) {
+          // Merge source into target
+          for (const memberId of source.members) {
+            target.members.push(memberId);
+            this.agentTeam.set(memberId, target.id);
+          }
+          source.members = [];
+          this.teams.delete(source.id);
+        }
+      }
+    }
+
     // Form new teams from remaining free agents
     const newTeams: LobbyTeam[] = [];
     while (freeIdx + teamSize <= freeAgents.length) {
