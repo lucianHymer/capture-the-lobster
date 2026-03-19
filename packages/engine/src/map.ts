@@ -1,0 +1,365 @@
+// Procedural map generator for Capture the Lobster
+// Generates rotationally symmetric hex maps with bases, walls, and chokepoints
+
+import {
+  Hex,
+  hexesInRadius,
+  hexDistance,
+  hexToString,
+  stringToHex,
+  getNeighbors,
+  hexEquals,
+} from './hex.js';
+
+export type TileType = 'ground' | 'wall' | 'base_a' | 'base_b';
+
+export interface GameMap {
+  tiles: Map<string, TileType>;
+  radius: number;
+  bases: {
+    A: { flag: Hex; spawns: Hex[] };
+    B: { flag: Hex; spawns: Hex[] };
+  };
+}
+
+export interface MapConfig {
+  radius?: number;
+  wallDensity?: number;
+  seed?: string;
+}
+
+// --- Seeded PRNG (mulberry32) ---
+
+function hashSeed(seed: string): number {
+  let h = 0;
+  for (let i = 0; i < seed.length; i++) {
+    h = (Math.imul(31, h) + seed.charCodeAt(i)) | 0;
+  }
+  return h >>> 0;
+}
+
+function mulberry32(seed: number): () => number {
+  let state = seed | 0;
+  return () => {
+    state = (state + 0x6d2b79f5) | 0;
+    let t = Math.imul(state ^ (state >>> 15), 1 | state);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+// --- Hex rotation (180°): (q,r) -> (-q,-r) ---
+
+function rotate180(hex: Hex): Hex {
+  return { q: -hex.q, r: -hex.r };
+}
+
+// --- BFS connectivity check ---
+
+function bfsReachable(
+  start: string,
+  passable: (key: string) => boolean,
+  allKeys: Set<string>,
+): Set<string> {
+  const visited = new Set<string>();
+  const queue: string[] = [start];
+  visited.add(start);
+  while (queue.length > 0) {
+    const current = queue.shift()!;
+    const hex = stringToHex(current);
+    for (const neighbor of getNeighbors(hex)) {
+      const key = hexToString(neighbor);
+      if (!visited.has(key) && allKeys.has(key) && passable(key)) {
+        visited.add(key);
+        queue.push(key);
+      }
+    }
+  }
+  return visited;
+}
+
+// --- Main generator ---
+
+export function generateMap(config?: MapConfig): GameMap {
+  const radius = config?.radius ?? 8;
+  const wallDensity = config?.wallDensity ?? 0.15;
+  const seedStr = config?.seed ?? String(Date.now());
+  const rng = mulberry32(hashSeed(seedStr));
+
+  // 1. Create all hexes as ground
+  const allHexes = hexesInRadius({ q: 0, r: 0 }, radius);
+  const tiles = new Map<string, TileType>();
+  for (const hex of allHexes) {
+    tiles.set(hexToString(hex), 'ground');
+  }
+  const allKeys = new Set(tiles.keys());
+
+  // 2. Place bases on opposite sides (A = south / high r, B = north / low r)
+  // Find the hex with the highest r that's within the map
+  // For a flat-top hex grid, the southernmost hex at q=0 is (0, radius)
+  const flagA: Hex = { q: 0, r: radius };
+  const flagB: Hex = rotate180(flagA); // (0, -radius)
+
+  // Mark base tiles and find spawns
+  const baseAKeys = new Set<string>();
+  const baseBKeys = new Set<string>();
+
+  // Flag hexes
+  tiles.set(hexToString(flagA), 'base_a');
+  baseAKeys.add(hexToString(flagA));
+  tiles.set(hexToString(flagB), 'base_b');
+  baseBKeys.add(hexToString(flagB));
+
+  // Spawns: closest ground neighbors to flag, pick up to 4
+  function pickSpawns(flag: Hex, baseType: TileType, baseKeySet: Set<string>): Hex[] {
+    const neighbors = getNeighbors(flag).filter((n) => tiles.has(hexToString(n)));
+    // Sort by distance to center (prefer outer spawns for variety, but they're all dist 1)
+    // Just take up to 4
+    const spawns = neighbors.slice(0, 4);
+    for (const s of spawns) {
+      const key = hexToString(s);
+      tiles.set(key, baseType);
+      baseKeySet.add(key);
+    }
+    return spawns;
+  }
+
+  const spawnsA = pickSpawns(flagA, 'base_a', baseAKeys);
+  const spawnsB = pickSpawns(flagB, 'base_b', baseBKeys);
+
+  // Collect all protected hexes (bases + buffer around bases + corridor around center)
+  const protectedKeys = new Set<string>();
+
+  // Protect base hexes and a small buffer around them
+  for (const key of baseAKeys) protectedKeys.add(key);
+  for (const key of baseBKeys) protectedKeys.add(key);
+
+  // Buffer: 1 hex around each base tile
+  for (const key of [...baseAKeys, ...baseBKeys]) {
+    const hex = stringToHex(key);
+    for (const n of getNeighbors(hex)) {
+      const nk = hexToString(n);
+      if (tiles.has(nk)) protectedKeys.add(nk);
+    }
+  }
+
+  // Protect a corridor around center (radius 2)
+  for (const hex of hexesInRadius({ q: 0, r: 0 }, 2)) {
+    protectedKeys.add(hexToString(hex));
+  }
+
+  // 3. Generate walls with seeded RNG and rotational symmetry
+  const wallKeys = new Set<string>();
+
+  // Skip wall generation entirely if density is 0
+  if (wallDensity <= 0) {
+    return {
+      tiles,
+      radius,
+      bases: {
+        A: { flag: flagA, spawns: spawnsA },
+        B: { flag: flagB, spawns: spawnsB },
+      },
+    };
+  }
+
+  // Calculate how many wall seed points we need.
+  // Each seed will grow ~2-3 tiles, so we need fewer seeds than total desired walls.
+  const totalTiles = tiles.size;
+  const targetWalls = Math.floor(totalTiles * wallDensity);
+  // Each seed pair (symmetric) produces ~4-6 wall tiles total
+  const seedCount = Math.max(1, Math.floor(targetWalls / 5));
+
+  // Collect candidate tiles (not protected)
+  const candidates: string[] = [];
+  for (const key of allKeys) {
+    if (!protectedKeys.has(key)) {
+      candidates.push(key);
+    }
+  }
+
+  // Only consider candidates in one half (r > 0 or q > 0 when r == 0) for symmetry
+  // We'll mirror each wall placement
+  const halfCandidates = candidates.filter((key) => {
+    const hex = stringToHex(key);
+    return hex.r > 0 || (hex.r === 0 && hex.q > 0);
+  });
+
+  // Shuffle half candidates
+  for (let i = halfCandidates.length - 1; i > 0; i--) {
+    const j = Math.floor(rng() * (i + 1));
+    [halfCandidates[i], halfCandidates[j]] = [halfCandidates[j], halfCandidates[i]];
+  }
+
+  // Place wall seeds
+  const wallSeeds: string[] = [];
+  for (let i = 0; i < Math.min(seedCount, halfCandidates.length); i++) {
+    const key = halfCandidates[i];
+    const hex = stringToHex(key);
+    const mirrorKey = hexToString(rotate180(hex));
+
+    if (!protectedKeys.has(key) && !protectedKeys.has(mirrorKey)) {
+      wallKeys.add(key);
+      wallKeys.add(mirrorKey);
+      wallSeeds.push(key);
+    }
+  }
+
+  // Grow walls from seeds (1-2 growth steps)
+  for (const seedKey of wallSeeds) {
+    const seedHex = stringToHex(seedKey);
+    const neighbors = getNeighbors(seedHex);
+
+    // Shuffle neighbors for randomness
+    for (let i = neighbors.length - 1; i > 0; i--) {
+      const j = Math.floor(rng() * (i + 1));
+      [neighbors[i], neighbors[j]] = [neighbors[j], neighbors[i]];
+    }
+
+    // Grow 1-2 neighbors into walls
+    const growCount = 1 + Math.floor(rng() * 2);
+    let grown = 0;
+    for (const n of neighbors) {
+      if (grown >= growCount) break;
+      const nk = hexToString(n);
+      const mirrorN = rotate180(n);
+      const mirrorNk = hexToString(mirrorN);
+      if (
+        tiles.has(nk) &&
+        tiles.has(mirrorNk) &&
+        !protectedKeys.has(nk) &&
+        !protectedKeys.has(mirrorNk) &&
+        !wallKeys.has(nk)
+      ) {
+        wallKeys.add(nk);
+        wallKeys.add(mirrorNk);
+        grown++;
+      }
+    }
+  }
+
+  // 4. Create chokepoints: add some walls near the equator (r ≈ 0) to narrow passages
+  // Find tiles near the horizontal midline but outside the center corridor
+  const midCandidates = candidates.filter((key) => {
+    const hex = stringToHex(key);
+    const absR = Math.abs(hex.r);
+    const dist = hexDistance(hex, { q: 0, r: 0 });
+    return absR <= 2 && dist > 2 && dist <= radius - 1 && !protectedKeys.has(key);
+  });
+
+  // Shuffle and pick some for chokepoint walls
+  for (let i = midCandidates.length - 1; i > 0; i--) {
+    const j = Math.floor(rng() * (i + 1));
+    [midCandidates[i], midCandidates[j]] = [midCandidates[j], midCandidates[i]];
+  }
+
+  const chokepointCount = Math.max(1, Math.floor(radius * 0.4));
+  for (let i = 0; i < Math.min(chokepointCount, midCandidates.length); i++) {
+    const key = midCandidates[i];
+    const hex = stringToHex(key);
+    const mirrorKey = hexToString(rotate180(hex));
+    if (
+      !protectedKeys.has(key) &&
+      !protectedKeys.has(mirrorKey) &&
+      tiles.has(mirrorKey)
+    ) {
+      wallKeys.add(key);
+      wallKeys.add(mirrorKey);
+    }
+  }
+
+  // 5. Apply walls to tile map
+  for (const key of wallKeys) {
+    tiles.set(key, 'wall');
+  }
+
+  // 6. Ensure connectivity: BFS from flag A must reach flag B
+  // If not connected, remove walls along the shortest conceptual path until connected
+  ensureConnectivity(tiles, allKeys, flagA, flagB, wallKeys, protectedKeys);
+
+  return {
+    tiles,
+    radius,
+    bases: {
+      A: { flag: flagA, spawns: spawnsA },
+      B: { flag: flagB, spawns: spawnsB },
+    },
+  };
+}
+
+function ensureConnectivity(
+  tiles: Map<string, TileType>,
+  allKeys: Set<string>,
+  flagA: Hex,
+  flagB: Hex,
+  wallKeys: Set<string>,
+  protectedKeys: Set<string>,
+): void {
+  const flagAKey = hexToString(flagA);
+  const flagBKey = hexToString(flagB);
+
+  const isPassable = (key: string) => tiles.get(key) !== 'wall';
+
+  // Check if already connected
+  let reachable = bfsReachable(flagAKey, isPassable, allKeys);
+  if (reachable.has(flagBKey)) return;
+
+  // Not connected — remove walls to create a path.
+  // Strategy: BFS on ALL tiles (ignoring walls) from flagA, recording parent.
+  // Then trace path from flagB and remove walls along it.
+  const parent = new Map<string, string>();
+  const visited = new Set<string>();
+  const queue: string[] = [flagAKey];
+  visited.add(flagAKey);
+
+  while (queue.length > 0) {
+    const current = queue.shift()!;
+    if (current === flagBKey) break;
+    const hex = stringToHex(current);
+    const neighbors = getNeighbors(hex);
+
+    // Prefer non-wall neighbors first (greedy: try to reuse existing ground)
+    neighbors.sort((a, b) => {
+      const aWall = tiles.get(hexToString(a)) === 'wall' ? 1 : 0;
+      const bWall = tiles.get(hexToString(b)) === 'wall' ? 1 : 0;
+      return aWall - bWall;
+    });
+
+    for (const n of neighbors) {
+      const nk = hexToString(n);
+      if (!visited.has(nk) && allKeys.has(nk)) {
+        visited.add(nk);
+        parent.set(nk, current);
+        queue.push(nk);
+      }
+    }
+  }
+
+  // Trace path from flagB back to flagA and remove walls
+  let current = flagBKey;
+  while (current !== flagAKey && parent.has(current)) {
+    if (tiles.get(current) === 'wall') {
+      tiles.set(current, 'ground');
+      wallKeys.delete(current);
+
+      // Maintain symmetry: also remove the mirror wall
+      const hex = stringToHex(current);
+      const mirrorKey = hexToString(rotate180(hex));
+      if (tiles.get(mirrorKey) === 'wall') {
+        tiles.set(mirrorKey, 'ground');
+        wallKeys.delete(mirrorKey);
+      }
+    }
+    current = parent.get(current)!;
+  }
+
+  // Verify connectivity after fix
+  reachable = bfsReachable(flagAKey, isPassable, allKeys);
+  if (!reachable.has(flagBKey)) {
+    // Last resort: clear all walls (should never happen with BFS path clearing)
+    for (const key of wallKeys) {
+      tiles.set(key, 'ground');
+    }
+    wallKeys.clear();
+  }
+}
