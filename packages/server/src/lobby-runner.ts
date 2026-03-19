@@ -120,6 +120,10 @@ export class LobbyRunner {
   private teamSize: number;
   /** Number of player slots reserved for external MCP agents (rest are bots) */
   private externalSlotCount: number;
+  /** Session IDs for persistent bot conversations (lobby phase) */
+  private lobbySessionIds: Map<string, string> = new Map();
+  /** Session IDs for persistent bot conversations (pre-game phase) */
+  private preGameSessionIds: Map<string, string> = new Map();
 
   constructor(
     teamSize: number = 2,
@@ -406,6 +410,7 @@ export class LobbyRunner {
     const timeout = setTimeout(() => localAbort.abort(), 20000);
 
     try {
+      const existingSession = this.lobbySessionIds.get(botId);
       const q = query({
         prompt,
         options: {
@@ -422,16 +427,21 @@ export class LobbyRunner {
           ],
           maxTurns: 6,
           abortController: localAbort,
-          persistSession: false,
           cwd: '/tmp',
+          // Resume existing session if we have one — bot remembers previous rounds
+          ...(existingSession ? { resume: existingSession } : { persistSession: true }),
         },
       });
 
-      for await (const _msg of q) {
-        // drain
+      for await (const msg of q) {
+        if ('session_id' in msg && (msg as any).session_id && !existingSession) {
+          this.lobbySessionIds.set(botId, (msg as any).session_id);
+        }
       }
     } catch (err: any) {
       if (err.name !== 'AbortError') throw err;
+      // If session is corrupt, reset it
+      this.lobbySessionIds.delete(botId);
     } finally {
       clearTimeout(timeout);
       roundAbort.signal.removeEventListener('abort', onRoundAbort);
@@ -542,6 +552,7 @@ export class LobbyRunner {
     const timeout = setTimeout(() => localAbort.abort(), 25000);
 
     try {
+      const existingSession = this.preGameSessionIds.get(botId);
       const q = query({
         prompt,
         options: {
@@ -556,16 +567,20 @@ export class LobbyRunner {
           ],
           maxTurns: 5,
           abortController: localAbort,
-          persistSession: false,
           cwd: '/tmp',
+          // Resume existing session — bot remembers discussion from round 1
+          ...(existingSession ? { resume: existingSession } : { persistSession: true }),
         },
       });
 
-      for await (const _msg of q) {
-        // drain
+      for await (const msg of q) {
+        if ('session_id' in msg && (msg as any).session_id && !existingSession) {
+          this.preGameSessionIds.set(botId, (msg as any).session_id);
+        }
       }
     } catch (err: any) {
       if (err.name !== 'AbortError') throw err;
+      this.preGameSessionIds.delete(botId);
     } finally {
       clearTimeout(timeout);
       this.abortController.signal.removeEventListener('abort', onRunnerAbort);

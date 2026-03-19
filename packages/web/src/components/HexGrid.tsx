@@ -37,18 +37,24 @@ function hexKey(q: number, r: number): string {
   return `${q},${r}`;
 }
 
-const TILE_FILLS: Record<string, string> = {
-  ground: '#1e293b',
-  wall: '#0f172a',
-  base_a: '#1e3a5f',
-  base_b: '#5f1e1e',
-};
-
 const CLASS_LETTERS: Record<string, string> = {
   rogue: 'R',
   knight: 'K',
   mage: 'M',
 };
+
+/** Simple seeded hash from q,r to pick a grass variant consistently */
+function grassVariant(q: number, r: number): string {
+  // Simple hash: mix q and r to get a stable pseudo-random value
+  const hash = Math.abs(((q * 73856093) ^ (r * 19349663)) | 0) % 3;
+  const variants = ['/tiles/terrain/green.png', '/tiles/terrain/green2.png', '/tiles/terrain/green3.png'];
+  return variants[hash];
+}
+
+/** Check if hex is "near" a base (within distance 2) for dirt tiles */
+function hexDistance(q1: number, r1: number, q2: number, r2: number): number {
+  return (Math.abs(q1 - q2) + Math.abs(q1 + r1 - q2 - r2) + Math.abs(r1 - r2)) / 2;
+}
 
 export default function HexGrid({
   tiles,
@@ -66,6 +72,17 @@ export default function HexGrid({
       map.set(hexKey(t.q, t.r), t);
     }
     return map;
+  }, [tiles]);
+
+  // Find base hex positions for dirt proximity check
+  const basePositions = useMemo(() => {
+    const bases: { q: number; r: number }[] = [];
+    for (const t of tiles) {
+      if (t.type === 'base_a' || t.type === 'base_b') {
+        bases.push({ q: t.q, r: t.r });
+      }
+    }
+    return bases;
   }, [tiles]);
 
   // Build unit ID -> 1-based team index (e.g., first unit on team A = 1)
@@ -124,6 +141,44 @@ export default function HexGrid({
     [onHexClick],
   );
 
+  // Determine the terrain image for each tile type
+  function getTerrainImage(tile: VisibleTile | undefined, q: number, r: number): string {
+    if (!tile) return grassVariant(q, r);
+
+    switch (tile.type) {
+      case 'wall':
+        return '/tiles/terrain/forest-deciduous.png';
+      case 'base_a':
+      case 'base_b':
+        // Flag hex uses keep, surrounding base/spawn uses castle
+        if (tile.flag) {
+          return '/tiles/terrain/keep.png';
+        }
+        return '/tiles/terrain/castle.png';
+      case 'ground':
+      default: {
+        // Use dirt for ground tiles near bases
+        const nearBase = basePositions.some(
+          (b) => hexDistance(q, r, b.q, b.r) <= 2
+        );
+        if (nearBase) return '/tiles/terrain/dirt.png';
+        return grassVariant(q, r);
+      }
+    }
+  }
+
+  // The hex tile images are 72x72. We need to scale them to fit our hex size.
+  // Flat-top hex: width = 2 * HEX_SIZE, height = sqrt(3) * HEX_SIZE
+  const hexWidth = HEX_SIZE * 2;
+  const hexHeight = SQRT3 * HEX_SIZE;
+  // Forest tiles are 144x144 (double size), we'll scale them a bit larger for canopy effect
+  const forestScale = 1.3;
+  const forestWidth = hexWidth * forestScale;
+  const forestHeight = hexHeight * forestScale;
+
+  // Unit sprite size — slightly smaller than hex
+  const unitSpriteSize = HEX_SIZE * 1.5;
+
   return (
     <svg
       viewBox={viewBox}
@@ -131,24 +186,14 @@ export default function HexGrid({
       style={{ maxHeight: '100%' }}
     >
       <defs>
-        {/* Crosshatch pattern for walls */}
-        <pattern
-          id="wall-hatch"
-          width="6"
-          height="6"
-          patternUnits="userSpaceOnUse"
-          patternTransform="rotate(45)"
-        >
-          <line
-            x1="0"
-            y1="0"
-            x2="0"
-            y2="6"
-            stroke="#1e293b"
-            strokeWidth="1"
-            opacity="0.3"
-          />
-        </pattern>
+        {/* Clip path for hex shape — used to clip terrain images */}
+        <clipPath id="hex-clip">
+          <polygon points={hexVertices(0, 0, HEX_SIZE)} />
+        </clipPath>
+        {/* Larger clip for forest canopy */}
+        <clipPath id="hex-clip-forest">
+          <polygon points={hexVertices(0, 0, HEX_SIZE * forestScale)} />
+        </clipPath>
       </defs>
 
       {allHexes.map(({ q, r }) => {
@@ -163,36 +208,21 @@ export default function HexGrid({
           : selectedTeam === 'A' ? visibleA?.has(key) ?? true
           : visibleB?.has(key) ?? true;
 
-        // Determine fill
-        let fill = '#0a0a0a'; // default fog/empty
-        let opacity = 1;
-        let strokeColor = '#334155';
-        let strokeWidth = 1;
+        // Determine visibility state
+        const isHidden = !teamVisible;
+        const isFogged = isFog && teamVisible;
+        const isVisible = teamVisible && !isFog;
+        const isWall = tile?.type === 'wall';
 
-        if (!teamVisible) {
-          // Completely hidden — dark empty hex
-          fill = '#0a0a0a';
-          opacity = 0.15;
-          strokeColor = '#1e293b';
-        } else if (tile) {
-          fill = TILE_FILLS[tile.type] || TILE_FILLS.ground;
-          if (isFog) {
-            fill = '#0a0a0a';
-            opacity = 0.3;
-          }
-        } else {
-          opacity = 0.3;
-        }
-
-        const isWall = tile?.type === 'wall' && !isFog && teamVisible;
-
-        // Determine if we should dim this tile based on team selection
         const unit = tile?.unit;
-        const showUnit = unit && teamVisible;
-        const dimUnit =
-          unit &&
-          selectedTeam !== 'all' &&
-          unit.team !== selectedTeam;
+        const showUnit = unit && isVisible;
+
+        const terrainSrc = getTerrainImage(tile, q, r);
+        const isForest = isWall;
+
+        // Image dimensions
+        const imgW = isForest ? forestWidth : hexWidth;
+        const imgH = isForest ? forestHeight : hexHeight;
 
         return (
           <g
@@ -200,21 +230,81 @@ export default function HexGrid({
             onClick={() => handleClick(q, r)}
             style={{ cursor: onHexClick ? 'pointer' : 'default' }}
           >
-            {/* Base hex fill */}
+            {/* Black background for hex (visible through transparency) */}
             <polygon
               points={vertices}
-              fill={fill}
-              stroke={strokeColor}
-              strokeWidth={strokeWidth}
-              opacity={opacity}
+              fill="#0a0a0a"
+              stroke="none"
             />
 
-            {/* Wall crosshatch overlay */}
-            {isWall && (
+            {/* Terrain tile image — clipped to hex shape */}
+            {(isVisible || isFogged) && (
+              <g
+                opacity={isHidden ? 0.15 : isFogged ? 0.3 : 1}
+                clipPath="url(#hex-clip)"
+                transform={`translate(${cx},${cy})`}
+              >
+                <image
+                  href={terrainSrc}
+                  x={-imgW / 2}
+                  y={-imgH / 2}
+                  width={imgW}
+                  height={imgH}
+                  preserveAspectRatio="xMidYMid slice"
+                />
+              </g>
+            )}
+
+            {/* Forest overlay — slightly larger for canopy effect, rendered above */}
+            {isForest && isVisible && (
+              <g
+                clipPath="url(#hex-clip)"
+                transform={`translate(${cx},${cy})`}
+              >
+                <image
+                  href="/tiles/terrain/forest-deciduous.png"
+                  x={-forestWidth / 2}
+                  y={-forestHeight / 2}
+                  width={forestWidth}
+                  height={forestHeight}
+                  preserveAspectRatio="xMidYMid slice"
+                />
+              </g>
+            )}
+
+            {/* Hex border */}
+            <polygon
+              points={vertices}
+              fill="none"
+              stroke={isHidden ? '#1e293b' : '#334155'}
+              strokeWidth={1}
+              opacity={isHidden ? 0.15 : 1}
+            />
+
+            {/* Fog/hidden overlay */}
+            {isHidden && (
               <polygon
                 points={vertices}
-                fill="url(#wall-hatch)"
-                stroke="none"
+                fill="#0a0a0a"
+                opacity={0.85}
+                stroke="#1e293b"
+                strokeWidth={1}
+              />
+            )}
+            {isFogged && (
+              <polygon
+                points={vertices}
+                fill="#0a0a0a"
+                opacity={0.6}
+              />
+            )}
+
+            {/* Base team color tint overlay */}
+            {(tile?.type === 'base_a' || tile?.type === 'base_b') && isVisible && (
+              <polygon
+                points={vertices}
+                fill={tile.type === 'base_a' ? '#3b82f6' : '#ef4444'}
+                opacity={0.15}
               />
             )}
 
@@ -236,62 +326,72 @@ export default function HexGrid({
             {showUnit && !isFog && (() => {
               const allUnits = (tile as any)?.units ?? (unit ? [unit] : []);
               if (allUnits.length === 0) return null;
-              if (allUnits.length === 1) {
-                const u = allUnits[0];
+
+              const renderUnit = (u: any, offsetX: number, spriteSize: number, fontSize: number) => {
                 const dim = selectedTeam !== 'all' && u.team !== selectedTeam;
+                const unitSprite = `/tiles/units/${u.unitClass}.png`;
+                const isTeamB = u.team === 'B';
                 return (
-                  <>
-                    <text
-                      x={cx}
-                      y={u.carryingFlag ? cy + 5 : cy + 2}
-                      textAnchor="middle"
-                      dominantBaseline="central"
-                      fontSize={HEX_SIZE * 0.7}
-                      fontWeight="bold"
-                      fill={u.team === 'A' ? '#60a5fa' : '#f87171'}
-                      opacity={dim ? 0.3 : 1}
-                      style={{ pointerEvents: 'none' }}
-                    >
-                      {CLASS_LETTERS[u.unitClass]}{unitTeamIndex.get(u.id) ?? ''}
-                    </text>
-                    {u.carryingFlag && (
-                      <text
-                        x={cx} y={cy - HEX_SIZE * 0.3}
-                        textAnchor="middle" dominantBaseline="central"
-                        fontSize={HEX_SIZE * 0.45} style={{ pointerEvents: 'none' }}
-                      >🦞</text>
-                    )}
-                  </>
-                );
-              }
-              // Multiple units — offset them
-              return allUnits.map((u: any, i: number) => {
-                const offsetX = i === 0 ? -HEX_SIZE * 0.25 : HEX_SIZE * 0.25;
-                const dim = selectedTeam !== 'all' && u.team !== selectedTeam;
-                return (
-                  <g key={u.id}>
+                  <g key={u.id} opacity={dim ? 0.3 : 1}>
+                    {/* Team color circle behind unit */}
+                    <circle
+                      cx={cx + offsetX}
+                      cy={cy}
+                      r={spriteSize * 0.38}
+                      fill={u.team === 'A' ? '#3b82f6' : '#ef4444'}
+                      opacity={0.35}
+                    />
+                    {/* Unit sprite */}
+                    <image
+                      href={unitSprite}
+                      x={cx + offsetX - spriteSize / 2}
+                      y={cy - spriteSize / 2}
+                      width={spriteSize}
+                      height={spriteSize}
+                      style={{
+                        pointerEvents: 'none',
+                        filter: isTeamB ? 'hue-rotate(160deg) saturate(1.3)' : 'none',
+                      }}
+                    />
+                    {/* Unit label */}
                     <text
                       x={cx + offsetX}
-                      y={u.carryingFlag ? cy + 5 : cy + 2}
+                      y={u.carryingFlag ? cy + spriteSize * 0.42 : cy + spriteSize * 0.35}
                       textAnchor="middle"
                       dominantBaseline="central"
-                      fontSize={HEX_SIZE * 0.55}
+                      fontSize={fontSize}
                       fontWeight="bold"
-                      fill={u.team === 'A' ? '#60a5fa' : '#f87171'}
-                      opacity={dim ? 0.3 : 1}
+                      fill={u.team === 'A' ? '#93c5fd' : '#fca5a5'}
+                      stroke="#000"
+                      strokeWidth={2.5}
+                      paintOrder="stroke"
                       style={{ pointerEvents: 'none' }}
                     >
                       {CLASS_LETTERS[u.unitClass]}{unitTeamIndex.get(u.id) ?? ''}
                     </text>
+                    {/* Carrying flag indicator */}
                     {u.carryingFlag && (
                       <text
-                        x={cx + offsetX} y={cy - HEX_SIZE * 0.3}
-                        textAnchor="middle" dominantBaseline="central"
-                        fontSize={HEX_SIZE * 0.35} style={{ pointerEvents: 'none' }}
+                        x={cx + offsetX}
+                        y={cy - spriteSize * 0.35}
+                        textAnchor="middle"
+                        dominantBaseline="central"
+                        fontSize={HEX_SIZE * 0.4}
+                        style={{ pointerEvents: 'none' }}
                       >🦞</text>
                     )}
                   </g>
                 );
+              };
+
+              if (allUnits.length === 1) {
+                return renderUnit(allUnits[0], 0, unitSpriteSize, HEX_SIZE * 0.45);
+              }
+
+              // Multiple units — offset them
+              return allUnits.map((u: any, i: number) => {
+                const offsetX = i === 0 ? -HEX_SIZE * 0.28 : HEX_SIZE * 0.28;
+                return renderUnit(u, offsetX, unitSpriteSize * 0.75, HEX_SIZE * 0.38);
               });
             })()}
           </g>
