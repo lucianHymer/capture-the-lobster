@@ -39,7 +39,7 @@ The grid uses flat-top hexagons. Valid directions: N, NE, SE, S, SW, NW (no E/W)
 2. Send a team_chat message sharing what you see and your plan
 3. Use submit_move with your movement path (array of directions)
 
-Be decisive and aggressive. Don't waste turns. Always submit a move.`;
+You have 30 SECONDS per turn. If you don't submit a move in time, you hold position. Be decisive and aggressive. Don't waste turns. Always submit a move.`;
 
 /**
  * Create an MCP server with game tools scoped to a specific agent.

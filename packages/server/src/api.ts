@@ -74,6 +74,8 @@ export interface SpectatorState {
   mapRadius: number;
   visibleA: string[];  // hex keys visible to team A
   visibleB: string[];  // hex keys visible to team B
+  turnTimeoutMs: number;
+  turnStartedAt: number;  // epoch ms
 }
 
 export interface GameRoom {
@@ -210,6 +212,8 @@ function buildSpectatorState(game: GameManager): SpectatorState {
     mapRadius: map.radius,
     visibleA: [...visibleA],
     visibleB: [...visibleB],
+    turnTimeoutMs: 30000,
+    turnStartedAt: Date.now(),
   };
 }
 
@@ -569,16 +573,28 @@ export class GameServer {
       return;
     }
 
+    // Hard 30s turn deadline — any agent that hasn't submitted gets an empty move
+    const TURN_TIMEOUT_MS = 30000;
+
     if (room.useClaudeBots) {
-      // Claude Agent SDK bots — each bot runs haiku with game MCP tools
-      await runAllBotsTurn(game, room.botSessions, game.turn);
+      await Promise.race([
+        runAllBotsTurn(game, room.botSessions, game.turn),
+        new Promise<void>((resolve) => setTimeout(resolve, TURN_TIMEOUT_MS)),
+      ]);
     } else {
-      // Fallback: random bot moves
       for (const botId of botHandles) {
         const unit = game.units.find((u) => u.id === botId);
         if (!unit || !unit.alive) continue;
         const randomDir = ALL_DIRECTIONS[Math.floor(Math.random() * ALL_DIRECTIONS.length)];
         game.submitMove(botId, [randomDir]);
+      }
+    }
+
+    // Force empty moves for anyone who didn't submit within the deadline
+    for (const botId of botHandles) {
+      if (!game.moveSubmissions.has(botId)) {
+        const unit = game.units.find((u) => u.id === botId);
+        if (unit?.alive) game.submitMove(botId, []);
       }
     }
 
