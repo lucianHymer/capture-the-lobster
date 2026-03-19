@@ -105,9 +105,60 @@ export default function HexGrid({
   }, [tiles]);
 
   // Use server-computed visibility sets (includes wall-blocking LoS)
-  // These are passed as props from the game page
   const seenA = visibleA ?? new Set<string>();
   const seenB = visibleB ?? new Set<string>();
+
+  // Edge-to-neighbor mapping for flat-top hex
+  const EDGE_NEIGHBORS: [number, number][] = useMemo(() => [
+    [+1, 0], [0, +1], [-1, +1], [-1, 0], [0, -1], [+1, -1],
+  ], []);
+
+  // Pre-compute all vision boundary edges as path data
+  // Rendered as single <path> elements to avoid anti-aliasing artifacts
+  const visionBoundaryPaths = useMemo(() => {
+    let pathA = '';    // Team A only edges
+    let pathB = '';    // Team B only edges
+    let pathBoth = ''; // Shared edges (both teams)
+
+    // Check every hex in both visibility sets
+    const allSeen = new Set([...seenA, ...seenB]);
+
+    for (const key of allSeen) {
+      const [q, r] = key.split(',').map(Number);
+      const [cx, cy] = axialToPixel(q, r, HEX_SIZE);
+      const inA = seenA.has(key);
+      const inB = seenB.has(key);
+
+      for (let i = 0; i < 6; i++) {
+        const [dq, dr] = EDGE_NEIGHBORS[i];
+        const neighborKey = hexKey(q + dq, r + dr);
+
+        const edgeA = inA && !seenA.has(neighborKey);
+        const edgeB = inB && !seenB.has(neighborKey);
+
+        if (!edgeA && !edgeB) continue;
+
+        const angle1 = (Math.PI / 3) * i;
+        const angle2 = (Math.PI / 3) * ((i + 1) % 6);
+        const x1 = (cx + HEX_SIZE * Math.cos(angle1)).toFixed(1);
+        const y1 = (cy + HEX_SIZE * Math.sin(angle1)).toFixed(1);
+        const x2 = (cx + HEX_SIZE * Math.cos(angle2)).toFixed(1);
+        const y2 = (cy + HEX_SIZE * Math.sin(angle2)).toFixed(1);
+
+        const segment = `M${x1},${y1}L${x2},${y2}`;
+
+        if (edgeA && edgeB) {
+          pathBoth += segment;
+        } else if (edgeA) {
+          pathA += segment;
+        } else {
+          pathB += segment;
+        }
+      }
+    }
+
+    return { pathA, pathB, pathBoth };
+  }, [seenA, seenB, EDGE_NEIGHBORS]);
 
   // Generate all hex positions in the map
   const allHexes = useMemo(() => {
@@ -318,74 +369,7 @@ export default function HexGrid({
               />
             )}
 
-            {/* Vision boundary — outer edges only, per-edge basis */}
-            {(() => {
-              const inA = seenA.has(key);
-              const inB = seenB.has(key);
-              if (!inA && !inB) return null;
-
-              // Edge-to-neighbor mapping for flat-top hex:
-              // Edge i connects vertex i to vertex (i+1)%6
-              // Edge 0 (SE side) → neighbor (+1, 0)
-              // Edge 1 (S side)  → neighbor (0, +1)
-              // Edge 2 (SW side) → neighbor (-1, +1)
-              // Edge 3 (NW side) → neighbor (-1, 0)
-              // Edge 4 (N side)  → neighbor (0, -1)
-              // Edge 5 (NE side) → neighbor (+1, -1)
-              const EDGE_NEIGHBORS: [number, number][] = [
-                [+1, 0], [0, +1], [-1, +1], [-1, 0], [0, -1], [+1, -1],
-              ];
-
-              const edges: React.ReactNode[] = [];
-              for (let i = 0; i < 6; i++) {
-                const [dq, dr] = EDGE_NEIGHBORS[i];
-                const neighborKey = hexKey(q + dq, r + dr);
-
-                const angle1 = (Math.PI / 3) * i;
-                const angle2 = (Math.PI / 3) * ((i + 1) % 6);
-                const x1 = cx + HEX_SIZE * Math.cos(angle1);
-                const y1 = cy + HEX_SIZE * Math.sin(angle1);
-                const x2 = cx + HEX_SIZE * Math.cos(angle2);
-                const y2 = cy + HEX_SIZE * Math.sin(angle2);
-
-                // Is this edge on Team A's outer boundary?
-                const edgeA = inA && !seenA.has(neighborKey);
-                // Is this edge on Team B's outer boundary?
-                const edgeB = inB && !seenB.has(neighborKey);
-
-                if (edgeA && edgeB) {
-                  // Both boundaries share this exact edge — dashed alternating
-                  edges.push(
-                    <line key={`ea-${i}`} x1={x1} y1={y1} x2={x2} y2={y2}
-                      stroke="#3b82f6" strokeWidth={2.5}
-                      strokeDasharray="6 6" strokeDashoffset={0}
-                      strokeLinecap="round"
-                      style={{ pointerEvents: 'none' }} />,
-                    <line key={`eb-${i}`} x1={x1} y1={y1} x2={x2} y2={y2}
-                      stroke="#ef4444" strokeWidth={2.5}
-                      strokeDasharray="6 6" strokeDashoffset={6}
-                      strokeLinecap="round"
-                      style={{ pointerEvents: 'none' }} />,
-                  );
-                } else if (edgeA) {
-                  edges.push(
-                    <line key={`ea-${i}`} x1={x1} y1={y1} x2={x2} y2={y2}
-                      stroke="#3b82f6" strokeWidth={2.5}
-                      strokeLinecap="round"
-                      style={{ pointerEvents: 'none' }} />
-                  );
-                } else if (edgeB) {
-                  edges.push(
-                    <line key={`eb-${i}`} x1={x1} y1={y1} x2={x2} y2={y2}
-                      stroke="#ef4444" strokeWidth={2.5}
-                      strokeLinecap="round"
-                      style={{ pointerEvents: 'none' }} />
-                  );
-                }
-              }
-
-              return edges.length > 0 ? edges : null;
-            })()}
+            {/* Vision boundary edges rendered as batch paths below */}
 
             {/* Base team color tint overlay */}
             {(tile?.type === 'base_a' || tile?.type === 'base_b') && isVisible && (
@@ -485,6 +469,74 @@ export default function HexGrid({
           </g>
         );
       })}
+      {/* Vision boundary paths — rendered on top of everything as single paths */}
+      {(selectedTeam === 'all' || selectedTeam === 'A') && visionBoundaryPaths.pathA && (
+        <path
+          d={visionBoundaryPaths.pathA}
+          fill="none"
+          stroke="#3b82f6"
+          strokeWidth={2.5}
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          style={{ pointerEvents: 'none' }}
+        />
+      )}
+      {(selectedTeam === 'all' || selectedTeam === 'B') && visionBoundaryPaths.pathB && (
+        <path
+          d={visionBoundaryPaths.pathB}
+          fill="none"
+          stroke="#ef4444"
+          strokeWidth={2.5}
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          style={{ pointerEvents: 'none' }}
+        />
+      )}
+      {selectedTeam === 'all' && visionBoundaryPaths.pathBoth && (
+        <>
+          <path
+            d={visionBoundaryPaths.pathBoth}
+            fill="none"
+            stroke="#3b82f6"
+            strokeWidth={2.5}
+            strokeDasharray="6 6"
+            strokeDashoffset={0}
+            strokeLinecap="round"
+            style={{ pointerEvents: 'none' }}
+          />
+          <path
+            d={visionBoundaryPaths.pathBoth}
+            fill="none"
+            stroke="#ef4444"
+            strokeWidth={2.5}
+            strokeDasharray="6 6"
+            strokeDashoffset={6}
+            strokeLinecap="round"
+            style={{ pointerEvents: 'none' }}
+          />
+        </>
+      )}
+      {/* Team-specific view: show only that team's boundary (including shared edges) */}
+      {selectedTeam === 'A' && visionBoundaryPaths.pathBoth && (
+        <path
+          d={visionBoundaryPaths.pathBoth}
+          fill="none"
+          stroke="#3b82f6"
+          strokeWidth={2.5}
+          strokeLinecap="round"
+          style={{ pointerEvents: 'none' }}
+        />
+      )}
+      {selectedTeam === 'B' && visionBoundaryPaths.pathBoth && (
+        <path
+          d={visionBoundaryPaths.pathBoth}
+          fill="none"
+          stroke="#ef4444"
+          strokeWidth={2.5}
+          strokeLinecap="round"
+          style={{ pointerEvents: 'none' }}
+        />
+      )}
     </svg>
   );
 }
