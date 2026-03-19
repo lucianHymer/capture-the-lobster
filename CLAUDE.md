@@ -126,6 +126,31 @@ The agent must poll `get_game_state` in a loop to play turns. The skill file sho
 - Pre-game class selection: 2 rounds — discuss first, then pick
 - `getTeamState` now includes team chat so bots can read discussion
 
+## Screenshots
+
+Use `agent-browser` with a **square viewport** for README screenshots:
+```bash
+agent-browser set viewport 900 900
+agent-browser open "http://localhost:5173/game/GAME_ID"
+agent-browser screenshot screenshots/game-all.png
+```
+Game view screenshots: use 900x900. Lobby page: use 1100x700.
+Click Team A / Team B buttons for fog-of-war perspective shots.
+
+## Visual Assets
+
+Hex tile art from **Battle for Wesnoth** (GPL licensed):
+- Terrain: `packages/web/public/tiles/terrain/` — grass variants, forest, castle, keep, dirt
+- Units: `packages/web/public/tiles/units/` — rogue, knight, mage sprites
+- Team B units get a CSS `hue-rotate(160deg)` filter to shift from blue to red
+
+The HexGrid component (`packages/web/src/components/HexGrid.tsx`) renders:
+- SVG flat-top hexes with Wesnoth tile backgrounds
+- Forest walls = grass base + forest overlay (trees need terrain underneath)
+- Vision boundary edges per team (blue/red) using server-computed fog-of-war
+- Unit sprites with team-colored backing circles and R1/K2/M1 labels
+- Border ring of forest tiles around the map edge (generated in `map.ts`)
+
 ## File Map
 
 ```
