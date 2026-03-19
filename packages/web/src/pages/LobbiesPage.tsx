@@ -12,6 +12,14 @@ interface Game {
   teamsB: number;
 }
 
+interface Lobby {
+  lobbyId: string;
+  phase: string;
+  agents: any[];
+  teams: Record<string, any>;
+  gameId?: string;
+}
+
 const mockGames: Game[] = [];
 
 function phaseBadge(phase: string) {
@@ -41,6 +49,7 @@ function phaseBadge(phase: string) {
 
 export default function LobbiesPage() {
   const [games, setGames] = useState<Game[]>(mockGames);
+  const [lobbies, setLobbies] = useState<Lobby[]>([]);
   const [starting, setStarting] = useState(false);
   const [startingLobby, setStartingLobby] = useState(false);
   const [creatingOpen, setCreatingOpen] = useState(false);
@@ -57,9 +66,12 @@ export default function LobbiesPage() {
 
     async function load() {
       try {
-        const data = await fetchGames();
+        const [gamesData, lobbiesData] = await Promise.all([
+          fetchGames(),
+          fetch('/api/lobbies').then(r => r.json()).catch(() => []),
+        ]);
         if (!cancelled) {
-          const mapped = (data as any[]).map((g: any) => ({
+          const mapped = (gamesData as any[]).map((g: any) => ({
             id: g.id,
             turn: g.turn ?? 0,
             maxTurns: 30,
@@ -69,6 +81,11 @@ export default function LobbiesPage() {
             teamsB: Array.isArray(g.teams?.B) ? g.teams.B.length : (g.teamsB ?? 0),
           }));
           setGames(mapped);
+          // Only show lobbies that haven't transitioned to a game yet
+          const activeLobbies = (lobbiesData as Lobby[]).filter(
+            (l) => l.phase !== 'game' && l.phase !== 'finished'
+          );
+          setLobbies(activeLobbies);
         }
       } catch {
         // API not available yet
@@ -76,7 +93,7 @@ export default function LobbiesPage() {
     }
 
     load();
-    const interval = setInterval(load, 5000);
+    const interval = setInterval(load, 3000); // Poll more frequently for lobbies
     return () => {
       cancelled = true;
       clearInterval(interval);
@@ -229,6 +246,21 @@ export default function LobbiesPage() {
         </div>
       )}
 
+      {/* Active Lobbies */}
+      {lobbies.length > 0 && (
+        <section>
+          <h2 className="mb-4 text-xl font-bold text-gray-100">
+            Active Lobbies
+            <span className="ml-2 text-sm font-normal text-gray-500">({lobbies.length})</span>
+          </h2>
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            {lobbies.map((lobby) => (
+              <LobbyCard key={lobby.lobbyId} lobby={lobby} onClick={() => navigate(`/lobby/${lobby.lobbyId}`)} />
+            ))}
+          </div>
+        </section>
+      )}
+
       {/* Active Games */}
       <section>
         <h2 className="mb-4 text-xl font-bold text-gray-100">
@@ -263,6 +295,67 @@ export default function LobbiesPage() {
         </section>
       )}
     </div>
+  );
+}
+
+function lobbyPhaseBadge(phase: string) {
+  switch (phase) {
+    case 'forming':
+      return (
+        <span className="inline-flex items-center rounded-full bg-purple-900/50 px-2.5 py-0.5 text-xs font-medium text-purple-400 ring-1 ring-inset ring-purple-500/30">
+          Forming Teams
+        </span>
+      );
+    case 'pre_game':
+      return (
+        <span className="inline-flex items-center rounded-full bg-yellow-900/50 px-2.5 py-0.5 text-xs font-medium text-yellow-400 ring-1 ring-inset ring-yellow-500/30">
+          Picking Classes
+        </span>
+      );
+    default:
+      return (
+        <span className="inline-flex items-center rounded-full bg-gray-800/50 px-2.5 py-0.5 text-xs font-medium text-gray-400 ring-1 ring-inset ring-gray-600/30">
+          {phase}
+        </span>
+      );
+  }
+}
+
+function LobbyCard({ lobby, onClick }: { lobby: Lobby; onClick: () => void }) {
+  const teamCount = Object.keys(lobby.teams).length;
+  const agentCount = lobby.agents.length;
+
+  return (
+    <button
+      onClick={onClick}
+      className="group cursor-pointer rounded-lg border border-purple-800/50 bg-gray-900 p-5 text-left transition-all hover:border-purple-700 hover:bg-gray-800/70"
+    >
+      <div className="mb-3 flex items-center justify-between">
+        <span className="font-mono text-sm text-gray-400">{lobby.lobbyId}</span>
+        {lobbyPhaseBadge(lobby.phase)}
+      </div>
+
+      <div className="mb-2 text-sm text-gray-300">
+        <span className="text-purple-400 font-semibold">{agentCount}</span> agents
+        {teamCount > 0 && (
+          <span className="ml-2">
+            · <span className="text-purple-400 font-semibold">{teamCount}</span> teams formed
+          </span>
+        )}
+      </div>
+
+      {/* Show agent names */}
+      <div className="flex flex-wrap gap-1">
+        {lobby.agents.slice(0, 8).map((agent: any) => (
+          <span
+            key={agent.id}
+            className="inline-block rounded bg-gray-800 px-1.5 py-0.5 text-xs text-gray-400"
+          >
+            {agent.handle || agent.id}
+          </span>
+        ))}
+      </div>
+    </button>
   );
 }
 
