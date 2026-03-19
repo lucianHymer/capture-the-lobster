@@ -43,6 +43,18 @@ const CLASS_LETTERS: Record<string, string> = {
   mage: 'M',
 };
 
+const CLASS_VISION: Record<string, number> = {
+  rogue: 4,
+  knight: 2,
+  mage: 3,
+};
+
+const CLASS_DASH: Record<string, string> = {
+  rogue: '4 3',   // dashed — fast, darting
+  knight: 'none',  // solid — sturdy
+  mage: '2 2',    // dotted — mystical
+};
+
 /** Simple seeded hash from q,r to pick a grass variant consistently */
 function grassVariant(q: number, r: number): string {
   // Simple hash: mix q and r to get a stable pseudo-random value
@@ -300,6 +312,50 @@ export default function HexGrid({
                 opacity={0.6}
               />
             )}
+
+            {/* Vision radius ring — rendered per unit */}
+            {showUnit && !isFog && (() => {
+              const allUnits = (tile as any)?.units ?? (unit ? [unit] : []);
+              return allUnits.map((u: any) => {
+                const vision = CLASS_VISION[u.unitClass] ?? 3;
+                // Vision radius in pixels: each hex step is roughly HEX_SIZE * sqrt(3) apart
+                const visionPx = vision * HEX_SIZE * SQRT3;
+                const teamColor = u.team === 'A' ? '59, 130, 246' : '239, 68, 68'; // blue / red RGB
+                const gradientId = `vision-${u.id}`;
+                const dashStyle = CLASS_DASH[u.unitClass] ?? 'none';
+                return (
+                  <g key={`vision-${u.id}`}>
+                    <defs>
+                      <radialGradient id={gradientId}>
+                        <stop offset="0%" stopColor={`rgba(${teamColor}, 0.18)`} />
+                        <stop offset="50%" stopColor={`rgba(${teamColor}, 0.10)`} />
+                        <stop offset="85%" stopColor={`rgba(${teamColor}, 0.04)`} />
+                        <stop offset="100%" stopColor={`rgba(${teamColor}, 0)`} />
+                      </radialGradient>
+                    </defs>
+                    {/* Gradient fill */}
+                    <circle
+                      cx={cx}
+                      cy={cy}
+                      r={visionPx}
+                      fill={`url(#${gradientId})`}
+                      style={{ pointerEvents: 'none' }}
+                    />
+                    {/* Edge ring with class-specific dash style */}
+                    <circle
+                      cx={cx}
+                      cy={cy}
+                      r={visionPx}
+                      fill="none"
+                      stroke={`rgba(${teamColor}, 0.4)`}
+                      strokeWidth={2}
+                      strokeDasharray={dashStyle}
+                      style={{ pointerEvents: 'none' }}
+                    />
+                  </g>
+                );
+              });
+            })()}
 
             {/* Base team color tint overlay */}
             {(tile?.type === 'base_a' || tile?.type === 'base_b') && isVisible && (
