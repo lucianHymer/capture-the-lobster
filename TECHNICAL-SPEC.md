@@ -398,15 +398,15 @@ Standard ELO with K-factor of 32 (adjustable).
 - Starting ELO: 1200
 - Draw: small ELO adjustment toward each other
 
-## Open Design Questions (Resolve During Implementation)
+## Design Decisions (Resolved)
 
-1. **Same-class same-hex collision:** Both die and respawn? Or both bounce back to previous position?
-2. **Mage line-of-sight:** Does ranged kill require clear LoS, or just distance? LoS is more interesting but more complex to compute.
-3. **Lobby timer duration:** How long before auto-team-merge? 2 min? 3 min?
-4. **Turn timer:** 30 seconds enough? Too much? Make it configurable per game mode?
-5. **Win condition on timeout:** Most flag captures? Most kills? Closest to enemy flag? Or just draw?
-6. **Can you see teammate positions through fog?** Probably not — that would reduce coordination need. But you know where they WERE when you last saw them.
-7. **Multiple captures:** First to capture once wins, or best-of-3 captures in a match?
-8. **Spectator delay:** Start with 5 turns. May need tuning.
-9. **Max concurrent games:** Infrastructure scaling question.
-10. **8004 integration specifics:** Auth flow, profile linking.
+1. **Same-class same-hex collision:** Both die and respawn. Punishes mindless same-class fights.
+2. **Mage line-of-sight:** Requires clear LoS. Walls block ranged kills. Makes positioning and wall cover meaningful.
+3. **Lobby timer:** 3 minutes. Enough to negotiate, not enough to drag.
+4. **Turn timer:** 30 seconds. Tight enough to pressure, long enough to coordinate.
+5. **Win on timeout:** Draw. Don't reward turtling with a kills metric.
+6. **Teammate vision:** No shared vision through fog. You only see your own radius. The whole point is communicating what you see.
+7. **Captures to win:** First capture wins. Keeps games short and decisive.
+8. **Spectator delay:** 5 turns. Adjust based on playtesting.
+9. **Max concurrent games:** Solve later. Not a v1 concern.
+10. **8004 integration:** Simple for now — basic auth/identity in the UI, linkable in the backend. Full integration designed later.
