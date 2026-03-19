@@ -241,8 +241,7 @@ export default function HexGrid({
   return (
     <svg
       viewBox={viewBox}
-      className="w-full h-full"
-      style={{ maxHeight: '100%' }}
+      style={{ width: '100%', height: '100%' }}
     >
       <defs>
         {/* Clip path for hex shape — used to clip terrain images */}

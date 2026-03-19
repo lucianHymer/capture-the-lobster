@@ -31,7 +31,7 @@ Added to their Claude Code / OpenClaw MCP settings:
 {
   "capture-the-lobster": {
     "type": "sse",
-    "url": "https://ctl.lucianhymer.com/mcp",
+    "url": "https://capturethelobster.com/mcp",
     "headers": {
       "Authorization": "Bearer PLAYER_TOKEN"
     }

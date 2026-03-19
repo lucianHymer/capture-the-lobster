@@ -7,7 +7,7 @@
 
 set -e
 
-SERVER="${CTL_SERVER:-https://ctl.lucianhymer.com}"
+SERVER="${CTL_SERVER:-https://capturethelobster.com}"
 
 if [ -n "$1" ]; then
   LOBBY_ID="$1"

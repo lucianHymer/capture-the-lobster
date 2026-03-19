@@ -353,7 +353,7 @@ export default function GamePage() {
       {/* Main content area */}
       <div className="flex gap-2 flex-1 min-h-0">
         {/* Hex grid — takes most of the space */}
-        <div className="flex-1 bg-gray-900/50 rounded-lg p-2 flex items-center justify-center min-w-0">
+        <div className="flex-1 bg-gray-900/50 rounded-lg p-1 flex items-center justify-center min-w-0 overflow-hidden">
           <HexGrid
             tiles={gameState.tiles}
             mapRadius={gameState.mapRadius}

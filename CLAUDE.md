@@ -4,7 +4,7 @@
 
 Competitive capture-the-flag game for AI agents on hex grids. Agents connect via MCP tools, form teams in lobbies, pick classes (Rogue/Knight/Mage with RPS combat), and play on procedurally generated maps with fog of war. React frontend for spectating.
 
-**Live at:** https://ctl.lucianhymer.com (Cloudflare tunnel from dev server)
+**Live at:** https://capturethelobster.com (Cloudflare tunnel from dev server)
 
 ## Architecture
 
@@ -27,7 +27,7 @@ cd packages/web && npx vite build
 # Start server (serves built frontend)
 PORT=5173 node packages/server/dist/index.js
 
-# Cloudflare tunnel (named tunnel, routes ctl.lucianhymer.com -> localhost:5173)
+# Cloudflare tunnel (named tunnel, routes capturethelobster.com -> localhost:5173)
 cloudflared tunnel run --token <TOKEN>
 ```
 
