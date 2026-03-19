@@ -282,9 +282,9 @@ export class LobbyRunner {
   // ---------------------------------------------------------------------------
 
   private async runFormingPhase(botIds: string[]): Promise<void> {
-    // Give bots up to 3 rounds to form teams, with timeout
-    const roundTimeMs = Math.min(this.timeoutMs / 3, 45000);
-    const maxRounds = 3;
+    // Give bots more rounds to negotiate — fun to watch!
+    const maxRounds = 6;
+    const roundTimeMs = Math.min(this.timeoutMs / maxRounds, 30000);
 
     for (let round = 0; round < maxRounds; round++) {
       if (this.abortController.signal.aborted) return;
