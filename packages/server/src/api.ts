@@ -33,6 +33,7 @@ import {
   tokenRegistry,
   closeAllMcpSessions,
   TokenEntry,
+  notifyTurnResolved,
 } from './mcp-http.js';
 
 // ---------------------------------------------------------------------------
@@ -868,6 +869,9 @@ export class GameServer {
     // Resolve the turn
     game.resolveTurn();
 
+    // Notify any external agents waiting via wait_for_turn
+    notifyTurnResolved(gameId);
+
     // Snapshot current state
     const state = buildSpectatorState(game, room.handleMap);
     room.stateHistory.push(state);
@@ -912,6 +916,9 @@ export class GameServer {
         ws.send(msg);
       }
     }
+
+    // Wake up any external agents waiting on wait_for_turn
+    notifyTurnResolved(room.game.gameId);
 
     console.log(`[Game] Game ${room.game.gameId} finished. Winner: ${room.game.winner ?? 'draw'}`);
   }

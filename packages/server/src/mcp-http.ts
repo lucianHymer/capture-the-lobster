@@ -55,6 +55,53 @@ export type GameResolver = (agentId: string) => GameManager | null;
 export type LobbyResolver = (agentId: string) => EngineLobbyManager | null;
 export type MoveCallback = (gameId: string, agentId: string) => void;
 
+// ---------------------------------------------------------------------------
+// Turn-change event system for wait_for_turn long-polling
+// ---------------------------------------------------------------------------
+
+type TurnWaiter = () => void;
+
+/** Per-game turn waiters: gameId -> set of resolve callbacks */
+const turnWaiters = new Map<string, Set<TurnWaiter>>();
+
+/**
+ * Call this when a turn resolves to wake up all waiting agents.
+ * Should be called from the game server's turn loop.
+ */
+export function notifyTurnResolved(gameId: string): void {
+  const waiters = turnWaiters.get(gameId);
+  if (waiters) {
+    for (const resolve of waiters) {
+      resolve();
+    }
+    waiters.clear();
+  }
+}
+
+/**
+ * Returns a promise that resolves when the next turn resolves for this game.
+ * Times out after maxWaitMs to prevent infinite hangs.
+ */
+function waitForNextTurn(gameId: string, maxWaitMs: number = 60000): Promise<void> {
+  return new Promise<void>((resolve) => {
+    if (!turnWaiters.has(gameId)) {
+      turnWaiters.set(gameId, new Set());
+    }
+    const waiters = turnWaiters.get(gameId)!;
+
+    const timer = setTimeout(() => {
+      waiters.delete(resolve);
+      resolve(); // Resolve on timeout too — agent gets current state
+    }, maxWaitMs);
+
+    const wrappedResolve = () => {
+      clearTimeout(timer);
+      resolve();
+    };
+    waiters.add(wrappedResolve);
+  });
+}
+
 /**
  * Create a new McpServer with all game/lobby tools scoped to agentId.
  * We use resolver functions so the server can dynamically find the
@@ -158,22 +205,37 @@ function createAgentMcpServer(
   // ==================== Game Phase Tools ====================
 
   server.tool(
-    'get_game_state',
-    'Get the current game state from your perspective (fog of war applied).',
+    'wait_for_turn',
+    'Wait for the next turn to start, then return the game state from your perspective (fog of war applied). This call hangs until the turn resolves — no need to poll. Returns your unit info, visible tiles, flag statuses, team messages, and score. Also returns the final state when the game ends.',
     {},
     async () => {
       const game = resolveGame(agentId);
-      if (!game) return errorResult('No game in progress.');
+      if (!game) return errorResult('No game in progress. The game has not started yet.');
+
+      // If game is finished, return final state immediately
       if (game.phase === 'finished') {
         const state = game.getStateForAgent(agentId);
-        return jsonResult({ ...state, winner: game.winner });
+        return jsonResult({ ...state, gameOver: true, winner: game.winner });
       }
-      try {
+
+      // If the agent hasn't submitted a move yet this turn, return current state immediately
+      // (they need to see the board before submitting)
+      if (!game.moveSubmissions.has(agentId)) {
         const state = game.getStateForAgent(agentId);
         return jsonResult(state);
-      } catch (err) {
-        return errorResult(err instanceof Error ? err.message : 'Failed to get game state.');
       }
+
+      // Agent already submitted — wait for the turn to resolve
+      await waitForNextTurn(game.gameId, 60000);
+
+      // Return the new state after turn resolution
+      const updatedGame = resolveGame(agentId);
+      if (!updatedGame) return errorResult('Game ended.');
+      const state = updatedGame.getStateForAgent(agentId);
+      if (updatedGame.phase === 'finished') {
+        return jsonResult({ ...state, gameOver: true, winner: updatedGame.winner });
+      }
+      return jsonResult(state);
     },
   );
 
@@ -207,7 +269,7 @@ function createAgentMcpServer(
 
   server.tool(
     'team_chat',
-    'Send a private message to your teammates.',
+    'Send a private message to your teammates. They cannot see what you see — share intel!',
     { message: z.string().describe('The message to send to your team') },
     async ({ message }) => {
       const game = resolveGame(agentId);
@@ -215,18 +277,6 @@ function createAgentMcpServer(
       if (game.phase !== 'in_progress') return errorResult('Team chat is only available during the game.');
       game.submitChat(agentId, message);
       return jsonResult({ success: true });
-    },
-  );
-
-  server.tool(
-    'get_team_messages',
-    'Get team chat messages, optionally filtered by turn.',
-    { sinceTurn: z.number().optional().describe('Only return messages from this turn onward.') },
-    async ({ sinceTurn }) => {
-      const game = resolveGame(agentId);
-      if (!game) return errorResult('No game in progress.');
-      const messages = game.getTeamMessages(agentId, sinceTurn);
-      return jsonResult({ messages });
     },
   );
 
