@@ -28,7 +28,10 @@ cd packages/web && npx vite build
 PORT=5173 node packages/server/dist/index.js
 
 # Cloudflare tunnel (named tunnel, routes capturethelobster.com -> localhost:5173)
-cloudflared tunnel run --token <TOKEN>
+# Binary stored persistently at /app/.borg/persistent/cloudflared
+# Token stored at /app/.borg/persistent/cloudflare-tunnel-token
+TOKEN=$(cat /app/.borg/persistent/cloudflare-tunnel-token)
+/app/.borg/persistent/cloudflared tunnel run --token "$TOKEN"
 ```
 
 ## Key Design Decisions

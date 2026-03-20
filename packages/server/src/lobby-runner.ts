@@ -116,6 +116,7 @@ export class LobbyRunner {
   private phase: LobbyRunnerPhase = 'forming';
   private callbacks: LobbyRunnerCallbacks;
   private timeoutMs: number;
+  private noTimeout: boolean = false;
   private gameId: string | null = null;
   private error: string | null = null;
   private abortController: AbortController;
@@ -139,6 +140,10 @@ export class LobbyRunner {
     this.timeoutMs = timeoutMs;
     this.teamSize = teamSize;
     this.abortController = new AbortController();
+  }
+
+  disableTimeout(): void {
+    this.noTimeout = true;
   }
 
   getState(): LobbyRunnerState {
@@ -359,7 +364,7 @@ export class LobbyRunner {
       }
 
       // Check timeout
-      if (Date.now() - startTime > this.timeoutMs) {
+      if (!this.noTimeout && Date.now() - startTime > this.timeoutMs) {
         console.log('Lobby timeout reached');
         return;
       }

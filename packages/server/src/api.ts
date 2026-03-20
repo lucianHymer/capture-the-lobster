@@ -32,8 +32,6 @@ import {
   closeAllMcpSessions,
   notifyTurnResolved,
   getAgentName,
-  setAgentLobby,
-  setAgentGame,
   getSessionByAgentId,
 } from './mcp-http.js';
 
@@ -486,6 +484,16 @@ export class GameServer {
       res.status(201).json({ agentId, handle });
     });
 
+    // Disable lobby timeout (keep lobby open indefinitely)
+    router.post('/lobbies/:id/no-timeout', (req, res) => {
+      const lobbyRoom = this.lobbies.get(req.params.id);
+      if (!lobbyRoom) {
+        return res.status(404).json({ error: 'Lobby not found' });
+      }
+      lobbyRoom.runner.disableTimeout();
+      res.json({ ok: true });
+    });
+
     // (Removed: /api/register — registration now happens via the MCP register tool)
 
     // List active games
@@ -672,7 +680,13 @@ export class GameServer {
     }
     // Count active lobbies (but not failed/finished ones)
     for (const [, room] of this.lobbies) {
-      if (!room.state || room.state.phase !== 'failed') count++;
+      if (!room.state || room.state.phase === 'failed') continue;
+      // If lobby's game is finished, don't count it
+      if (room.state.gameId) {
+        const gameRoom = this.games.get(room.state.gameId);
+        if (gameRoom?.finished) continue;
+      }
+      count++;
     }
     return count;
   }
@@ -1006,8 +1020,7 @@ export class GameServer {
     // Separate bot handles from external agent handles
     for (const p of players) {
       if (p.id.startsWith('ext_')) {
-        // External agent — update their session with the game ID
-        setAgentGame(p.id, gameId);
+        // External agent — track their game
         this.agentToGame.set(p.id, gameId);
         externalSlots.set(p.id, {
           token: '',

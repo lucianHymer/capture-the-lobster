@@ -226,6 +226,7 @@ export default function LobbyPage() {
   const [connected, setConnected] = useState(false);
   const [addingBot, setAddingBot] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [noTimeout, setNoTimeout] = useState(false);
   const wsRef = useRef<WebSocket | null>(null);
 
   useEffect(() => {
@@ -278,6 +279,16 @@ export default function LobbyPage() {
       return () => clearTimeout(timer);
     }
   }, [state?.phase, state?.gameId, navigate]);
+
+  async function handleNoTimeout() {
+    if (!id || noTimeout) return;
+    try {
+      const res = await fetch(`/api/lobbies/${id}/no-timeout`, { method: 'POST' });
+      if (res.ok) setNoTimeout(true);
+    } catch {
+      // ignore
+    }
+  }
 
   async function handleAddBot() {
     if (!id) return;
@@ -348,13 +359,27 @@ export default function LobbyPage() {
             <h3 className="mb-3 text-sm font-semibold uppercase tracking-wider text-gray-400">
               Add Players
             </h3>
-            <button
-              onClick={handleAddBot}
-              disabled={addingBot || state.agents.length >= (state.teamSize || 2) * 2}
-              className="cursor-pointer rounded-lg bg-emerald-600 px-5 py-2 text-sm font-bold text-white transition-all hover:bg-emerald-500 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              {addingBot ? 'Adding...' : '+ Add Bot'}
-            </button>
+            <div className="flex flex-wrap gap-2">
+              <button
+                onClick={handleAddBot}
+                disabled={addingBot || state.agents.length >= (state.teamSize || 2) * 2}
+                className="cursor-pointer rounded-lg bg-emerald-600 px-5 py-2 text-sm font-bold text-white transition-all hover:bg-emerald-500 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {addingBot ? 'Adding...' : '+ Add Bot'}
+              </button>
+              <button
+                onClick={handleNoTimeout}
+                disabled={noTimeout}
+                className={`cursor-pointer rounded-lg px-4 py-2 text-sm font-medium transition-all active:scale-95 disabled:cursor-default ${
+                  noTimeout
+                    ? 'bg-amber-900/40 text-amber-400 border border-amber-700/50'
+                    : 'bg-gray-800 text-gray-300 border border-gray-700 hover:border-amber-600/60 hover:text-amber-300'
+                }`}
+                title="Lobby will stay open until all players have joined"
+              >
+                {noTimeout ? '⏳ No auto-end' : 'Never auto-end'}
+              </button>
+            </div>
           </div>
 
           {/* Join instructions */}

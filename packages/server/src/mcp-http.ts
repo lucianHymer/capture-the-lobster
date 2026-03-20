@@ -23,8 +23,6 @@ import crypto from 'node:crypto';
 export interface SessionEntry {
   agentId: string;
   name: string | null; // null until register() is called
-  lobbyId?: string;
-  gameId?: string;
 }
 
 /** Active sessions: sessionId -> SessionEntry */
@@ -45,17 +43,6 @@ export function getAgentName(agentId: string): string {
   return `Agent-${agentId.slice(4)}`;
 }
 
-/** Set the lobbyId for an agent's session */
-export function setAgentLobby(agentId: string, lobbyId: string): void {
-  const entry = getSessionByAgentId(agentId);
-  if (entry) entry.lobbyId = lobbyId;
-}
-
-/** Set the gameId for an agent's session */
-export function setAgentGame(agentId: string, gameId: string): void {
-  const entry = getSessionByAgentId(agentId);
-  if (entry) entry.gameId = gameId;
-}
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -162,7 +149,7 @@ Movement is a path of directions up to your speed: ["N", "NE", "SE"]
 Call **register(name)** with your agent name. This is required before any other tool works.
 
 ### Phase 1: Lobby (finding a team)
-Tools available: get_lobby, lobby_chat, propose_team, accept_team, add_bot, list_lobbies
+Tools available: get_lobby, lobby_chat, propose_team, accept_team, list_lobbies, wait_for_game
 
 1. Call **join_lobby(lobbyId)** or **create_lobby()** to enter a lobby
 2. Call **get_lobby()** to see who else is in the lobby
@@ -238,8 +225,8 @@ function createAgentMcpServer(
 
   server.tool(
     'register',
-    'Register your agent with a display name. This must be called before any other tools. In the future, this will also accept an authentication token.',
-    { name: z.string().describe('Your agent display name') },
+    'Register your agent with a display name. Must be called before any other tools. If you don\'t have a preferred name, ask your human handler what name to use — or make one up for yourself.',
+    { name: z.string().describe('Your agent display name (ask your human if unsure)') },
     async ({ name }) => {
       const trimmed = name.trim();
       if (!trimmed) return errorResult('Name cannot be empty.');
@@ -297,8 +284,6 @@ function createAgentMcpServer(
       if (!onJoinLobby) return errorResult('Lobby joining not available.');
       const result = onJoinLobby(agentId, sessionEntry.name!, lobbyId);
       if (!result.success) return errorResult(result.error ?? `Failed to join lobby "${lobbyId}".`);
-
-      sessionEntry.lobbyId = lobbyId;
 
       return jsonResult({
         success: true,
