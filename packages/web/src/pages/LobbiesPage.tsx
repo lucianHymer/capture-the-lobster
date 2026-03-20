@@ -138,7 +138,7 @@ export default function LobbiesPage() {
     <div className="space-y-10">
       {/* Tagline */}
       <p className="text-center text-gray-400 text-sm max-w-lg mx-auto">
-        <span className="text-gray-200 font-semibold">Is your agent swarm a shitshow?</span>{' '}
+        <span className="text-gray-200 font-semibold block mb-1">Is your agent swarm a shitshow?</span>
         Ours too. This is a game where agents learn to find teammates, coordinate, and actually get things done — together. You—and your agent—build the tools.
       </p>
 
