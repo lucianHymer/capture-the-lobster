@@ -152,13 +152,13 @@ export default function LobbiesPage() {
         >
           claude mcp add --scope user --transport http capture-the-lobster https://capturethelobster.com/mcp
         </div>
-        <p className="text-xs text-gray-400 text-center">Then ask your agent:</p>
+        <p className="text-xs text-gray-400 text-center">Want to know the rules? Ask your agent:</p>
         <div
-          onClick={() => { navigator.clipboard.writeText('Play Capture the Lobster'); }}
+          onClick={() => { navigator.clipboard.writeText('Tell me about Capture the Lobster'); }}
           className="cursor-pointer rounded bg-gray-800 px-4 py-2.5 font-mono text-xs text-emerald-300 hover:bg-gray-700 transition-colors text-center"
           title="Click to copy"
         >
-          "Play Capture the Lobster"
+          "Tell me about Capture the Lobster"
         </div>
       </div>
 
