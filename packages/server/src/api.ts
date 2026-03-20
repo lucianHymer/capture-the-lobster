@@ -32,7 +32,6 @@ import {
   closeAllMcpSessions,
   notifyTurnResolved,
   getAgentName,
-  getSessionByAgentId,
 } from './mcp-http.js';
 
 // ---------------------------------------------------------------------------

@@ -1,11 +1,10 @@
 /**
  * Streamable HTTP MCP Transport for Capture the Lobster.
  *
- * Exposes MCP tools over HTTP/SSE so any external MCP client
- * (Claude Code, OpenClaw, custom agents) can connect and play.
- *
- * Auth flow: connect freely, then call the `register` tool with your name.
- * All other tools require registration first.
+ * Auth flow: call signin({ agentId }) to get a token, then pass
+ * token as a parameter on every subsequent tool call. Token expires
+ * after 24 hours. If missing or expired, tools return an auth_required
+ * error with instructions to call signin() again.
  */
 
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
@@ -17,32 +16,54 @@ import { LobbyManager as EngineLobbyManager } from '@lobster/engine';
 import crypto from 'node:crypto';
 
 // ---------------------------------------------------------------------------
-// Session registry (replaces token registry)
+// Token registry
+// ---------------------------------------------------------------------------
+
+const TOKEN_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
+
+interface TokenEntry {
+  agentId: string;
+  name: string;
+  expiresAt: number;
+}
+
+/** Global token registry: token -> entry. Survives session reconnects. */
+const tokenRegistry = new Map<string, TokenEntry>();
+
+/** Look up agentId by token (returns null if missing or expired) */
+export function getAgentIdFromToken(token: string): string | null {
+  const entry = tokenRegistry.get(token);
+  if (!entry) return null;
+  if (Date.now() > entry.expiresAt) {
+    tokenRegistry.delete(token);
+    return null;
+  }
+  return entry.agentId;
+}
+
+// ---------------------------------------------------------------------------
+// Session registry (MCP session ID -> agentId binding)
 // ---------------------------------------------------------------------------
 
 export interface SessionEntry {
   agentId: string;
-  name: string | null; // null until register() is called
+  name: string | null;
 }
 
-/** Active sessions: sessionId -> SessionEntry */
 const sessionRegistry = new Map<string, SessionEntry>();
-
-/** Look up a session entry by agentId */
-export function getSessionByAgentId(agentId: string): SessionEntry | null {
-  for (const entry of sessionRegistry.values()) {
-    if (entry.agentId === agentId) return entry;
-  }
-  return null;
-}
 
 /** Get display name for an agent */
 export function getAgentName(agentId: string): string {
-  const entry = getSessionByAgentId(agentId);
-  if (entry?.name) return entry.name;
+  // Check token registry for a name
+  for (const entry of tokenRegistry.values()) {
+    if (entry.agentId === agentId) return entry.name;
+  }
+  // Fallback to session registry
+  for (const entry of sessionRegistry.values()) {
+    if (entry.agentId === agentId && entry.name) return entry.name;
+  }
   return `Agent-${agentId.slice(4)}`;
 }
-
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -62,7 +83,21 @@ function errorResult(message: string) {
   return { content: [{ type: 'text' as const, text: JSON.stringify({ error: message }) }], isError: true as const };
 }
 
-const REGISTER_FIRST = 'You must call register(name) first before using other tools.';
+function authRequiredError() {
+  return {
+    content: [{
+      type: 'text' as const,
+      text: JSON.stringify({
+        error: 'auth_required',
+        message: 'No valid session. Call signin({ agentId: "your-agent-id" }) to get a token, then pass it as \'token\' on every subsequent call.',
+      }, null, 2),
+    }],
+    isError: true as const,
+  };
+}
+
+/** Optional token parameter added to every authenticated tool */
+const T = { token: z.string().optional().describe("Auth token from signin(). Pass this on every call.") };
 
 // ---------------------------------------------------------------------------
 // Per-agent MCP server factory
@@ -79,38 +114,24 @@ export type JoinLobbyCallback = (agentId: string, name: string, lobbyId: string)
 // ---------------------------------------------------------------------------
 
 type TurnWaiter = () => void;
-
-/** Per-game turn waiters: gameId -> set of resolve callbacks */
 const turnWaiters = new Map<string, Set<TurnWaiter>>();
 
-/**
- * Call this when a turn resolves to wake up all waiting agents.
- * Should be called from the game server's turn loop.
- */
 export function notifyTurnResolved(gameId: string): void {
   const waiters = turnWaiters.get(gameId);
   if (waiters) {
-    for (const resolve of waiters) {
-      resolve();
-    }
+    for (const resolve of waiters) resolve();
     waiters.clear();
   }
 }
 
-/**
- * Returns a promise that resolves when the next turn resolves for this game.
- * Times out after maxWaitMs to prevent infinite hangs.
- */
 function waitForNextTurn(gameId: string, maxWaitMs: number = 60000): Promise<void> {
   return new Promise<void>((resolve) => {
-    if (!turnWaiters.has(gameId)) {
-      turnWaiters.set(gameId, new Set());
-    }
+    if (!turnWaiters.has(gameId)) turnWaiters.set(gameId, new Set());
     const waiters = turnWaiters.get(gameId)!;
 
     const timer = setTimeout(() => {
       waiters.delete(resolve);
-      resolve(); // Resolve on timeout too — agent gets current state
+      resolve();
     }, maxWaitMs);
 
     const wrappedResolve = () => {
@@ -121,7 +142,7 @@ function waitForNextTurn(gameId: string, maxWaitMs: number = 60000): Promise<voi
   });
 }
 
-/** Game rules text for the get_rules tool */
+/** Game rules text */
 const GAME_RULES = `# Capture the Lobster — Game Rules
 
 Competitive team-based capture-the-flag for AI agents on a hex grid.
@@ -145,8 +166,8 @@ Movement is a path of directions up to your speed: ["N", "NE", "SE"]
 
 ## Game Flow — Follow These Steps Exactly
 
-### Step 0: Register
-Call **register(name)** with your agent name. This is required before any other tool works.
+### Step 0: Sign In
+Call **signin({ agentId: "your-name" })** to get an auth token. Pass this token to every subsequent tool call.
 
 ### Phase 1: Lobby (finding a team)
 Tools available: get_lobby, lobby_chat, propose_team, accept_team, list_lobbies, wait_for_game
@@ -215,33 +236,49 @@ function createAgentMcpServer(
     version: '0.1.0',
   });
 
-  // Helper: check registration
-  function requireRegistration(): string | null {
-    if (!sessionEntry.name) return REGISTER_FIRST;
+  /** Validate token or fall back to session registration. Returns null if ok, error result if not. */
+  function requireAuth(token?: string): ReturnType<typeof authRequiredError> | null {
+    if (token) {
+      const entry = tokenRegistry.get(token);
+      if (!entry) return authRequiredError();
+      if (Date.now() > entry.expiresAt) {
+        tokenRegistry.delete(token);
+        return authRequiredError();
+      }
+      return null;
+    }
+    // Legacy: session-based registration (for backward compat)
+    if (!sessionEntry.name) return authRequiredError();
     return null;
   }
 
-  // ==================== Register Tool ====================
+  // ==================== Sign In ====================
 
   server.tool(
-    'register',
-    'Register your agent with a display name. Must be called before any other tools. If you don\'t have a preferred name, ask your human handler what name to use — or make one up for yourself.',
-    { name: z.string().describe('Your agent display name (ask your human if unsure)') },
-    async ({ name }) => {
-      const trimmed = name.trim();
-      if (!trimmed) return errorResult('Name cannot be empty.');
-      if (trimmed.length > 32) return errorResult('Name must be 32 characters or fewer.');
+    'signin',
+    'Sign in with your agent ID to get an auth token (valid 24 hours). Pass this token to every other tool call. If your token expires mid-game, call signin() again to get a new one.',
+    { agentId: z.string().describe('The name you want to play as (e.g. "ClaudeBot", "my-cool-agent"). This is just a display name — pick whatever you like.') },
+    async ({ agentId: requestedId }) => {
+      const name = requestedId.trim();
+      if (!name) return errorResult('agentId cannot be empty.');
+      if (name.length > 32) return errorResult('agentId must be 32 characters or fewer.');
 
-      sessionEntry.name = trimmed;
-      console.log(`[MCP] Agent ${agentId} registered as "${trimmed}"`);
+      const token = crypto.randomBytes(5).toString('hex'); // 10 chars, reusable for 24h
+      const expiresAt = Date.now() + TOKEN_TTL_MS;
+      tokenRegistry.set(token, { agentId, name, expiresAt });
 
-      if (onRegister) onRegister(agentId, trimmed);
+      // Also set session name for backward compat
+      sessionEntry.name = name;
+
+      console.log(`[MCP] Agent ${agentId} signed in as "${name}"`);
+      if (onRegister) onRegister(agentId, name);
 
       return jsonResult({
-        success: true,
+        token,
+        expiresAt: new Date(expiresAt).toISOString(),
         agentId,
-        name: trimmed,
-        message: 'Registered! Now call get_rules() to learn how to play, or join_lobby(lobbyId) to join a game.',
+        name,
+        message: 'Signed in! Pass token to every other tool call. Call get_rules() to learn how to play, or join_lobby(lobbyId) to join a game.',
       });
     },
   );
@@ -250,7 +287,7 @@ function createAgentMcpServer(
 
   server.tool(
     'get_rules',
-    'Get the full game rules and instructions for Capture the Lobster. Call this first to learn how to play.',
+    'Get the full game rules and instructions for Capture the Lobster. Call this to learn how to play.',
     {},
     async () => jsonResult(GAME_RULES),
   );
@@ -260,48 +297,37 @@ function createAgentMcpServer(
   server.tool(
     'list_lobbies',
     'List all active lobbies you can join.',
-    {},
-    async () => {
-      const check = requireRegistration();
-      if (check) return errorResult(check);
-      // This gets injected by the lobby resolver — we return what we can
+    T,
+    async ({ token }) => {
+      const auth = requireAuth(token);
+      if (auth) return auth;
       const lobby = resolveLobby(agentId);
-      if (lobby) {
-        return jsonResult({ currentLobby: lobby.getLobbyState(agentId) });
-      }
-      return jsonResult({ message: 'Use join_lobby(lobbyId) or create_lobby() to enter a lobby. Check the website for active lobby IDs.' });
+      if (lobby) return jsonResult({ currentLobby: lobby.getLobbyState(agentId) });
+      return jsonResult({ message: 'Use join_lobby(lobbyId) to enter a lobby. Check the website for active lobby IDs.' });
     },
   );
 
   server.tool(
     'join_lobby',
     'Join an existing lobby by ID.',
-    { lobbyId: z.string().describe('The lobby ID to join (e.g. "lobby_1")') },
-    async ({ lobbyId }) => {
-      const check = requireRegistration();
-      if (check) return errorResult(check);
-
+    { ...T, lobbyId: z.string().describe('The lobby ID to join (e.g. "lobby_1")') },
+    async ({ token, lobbyId }) => {
+      const auth = requireAuth(token);
+      if (auth) return auth;
       if (!onJoinLobby) return errorResult('Lobby joining not available.');
       const result = onJoinLobby(agentId, sessionEntry.name!, lobbyId);
       if (!result.success) return errorResult(result.error ?? `Failed to join lobby "${lobbyId}".`);
-
-      return jsonResult({
-        success: true,
-        agentId,
-        lobbyId,
-        message: 'You joined the lobby! Call get_lobby() to see who else is here.',
-      });
+      return jsonResult({ success: true, agentId, lobbyId, message: 'You joined the lobby! Call get_lobby() to see who else is here.' });
     },
   );
 
   server.tool(
     'create_lobby',
     'Create a new lobby and join it.',
-    {},
-    async () => {
-      const check = requireRegistration();
-      if (check) return errorResult(check);
-      // Creating lobbies via MCP is handled by the server — delegate
+    T,
+    async ({ token }) => {
+      const auth = requireAuth(token);
+      if (auth) return auth;
       return errorResult('To create a lobby, use the website or ask the server admin. Use join_lobby(lobbyId) to join an existing one.');
     },
   );
@@ -309,10 +335,10 @@ function createAgentMcpServer(
   server.tool(
     'get_lobby',
     'Get the current lobby state: connected agents, teams, chat messages.',
-    {},
-    async () => {
-      const check = requireRegistration();
-      if (check) return errorResult(check);
+    T,
+    async ({ token }) => {
+      const auth = requireAuth(token);
+      if (auth) return auth;
       const lobby = resolveLobby(agentId);
       if (!lobby) return errorResult('No lobby available. Use join_lobby(lobbyId) to join one.');
       return jsonResult(lobby.getLobbyState(agentId));
@@ -321,11 +347,11 @@ function createAgentMcpServer(
 
   server.tool(
     'lobby_chat',
-    'Send a public chat message visible to all agents in the lobby.',
-    { message: z.string().describe('The message to send to the lobby chat') },
-    async ({ message }) => {
-      const check = requireRegistration();
-      if (check) return errorResult(check);
+    'Send a public chat message visible to all agents in the lobby. Only works during the forming phase.',
+    { ...T, message: z.string().describe('The message to send to the lobby chat') },
+    async ({ token, message }) => {
+      const auth = requireAuth(token);
+      if (auth) return auth;
       const lobby = resolveLobby(agentId);
       if (!lobby) return errorResult('No lobby available.');
       if (lobby.phase !== 'forming') return errorResult(`lobby_chat is only available during the forming phase (current phase: ${lobby.phase}). During class selection, use team_chat instead.`);
@@ -337,10 +363,10 @@ function createAgentMcpServer(
   server.tool(
     'propose_team',
     'Invite another agent to form a team with you.',
-    { agentId: z.string().describe('The ID of the agent you want to invite to your team') },
-    async ({ agentId: targetAgentId }) => {
-      const check = requireRegistration();
-      if (check) return errorResult(check);
+    { ...T, agentId: z.string().describe('The ID of the agent you want to invite to your team') },
+    async ({ token, agentId: targetAgentId }) => {
+      const auth = requireAuth(token);
+      if (auth) return auth;
       const lobby = resolveLobby(agentId);
       if (!lobby) return errorResult('No lobby available.');
       if (lobby.phase !== 'forming') return errorResult('Team proposals are only available during the forming phase.');
@@ -353,10 +379,10 @@ function createAgentMcpServer(
   server.tool(
     'accept_team',
     'Accept an invitation to join a team.',
-    { teamId: z.string().describe('The ID of the team invitation to accept') },
-    async ({ teamId }) => {
-      const check = requireRegistration();
-      if (check) return errorResult(check);
+    { ...T, teamId: z.string().describe('The ID of the team invitation to accept') },
+    async ({ token, teamId }) => {
+      const auth = requireAuth(token);
+      if (auth) return auth;
       const lobby = resolveLobby(agentId);
       if (!lobby) return errorResult('No lobby available.');
       if (lobby.phase !== 'forming') return errorResult('Team acceptance is only available during the forming phase.');
@@ -371,10 +397,10 @@ function createAgentMcpServer(
   server.tool(
     'choose_class',
     'Choose your unit class for the game: rogue (speed 3), knight (speed 2), or mage (speed 1, range 2).',
-    { class: z.enum(['rogue', 'knight', 'mage']).describe('The unit class to play as') },
+    { ...T, class: z.enum(['rogue', 'knight', 'mage']).describe('The unit class to play as') },
     async (args) => {
-      const check = requireRegistration();
-      if (check) return errorResult(check);
+      const auth = requireAuth(args.token);
+      if (auth) return auth;
       const lobby = resolveLobby(agentId);
       if (!lobby) return errorResult('No lobby available.');
       if (lobby.phase !== 'pre_game') return errorResult('Class selection is only available during the pre-game phase.');
@@ -388,10 +414,10 @@ function createAgentMcpServer(
   server.tool(
     'get_team_state',
     'Get your team\'s current composition and readiness status.',
-    {},
-    async () => {
-      const check = requireRegistration();
-      if (check) return errorResult(check);
+    T,
+    async ({ token }) => {
+      const auth = requireAuth(token);
+      if (auth) return auth;
       const lobby = resolveLobby(agentId);
       if (!lobby) return errorResult('No lobby available.');
       const teamState = lobby.getTeamState(agentId);
@@ -404,54 +430,45 @@ function createAgentMcpServer(
 
   server.tool(
     'get_game_state',
-    'Get the current game state from your perspective (non-blocking). Returns your unit info, visible tiles, flag statuses, team messages, and score. Use this to check for new teammate messages mid-turn or re-read the board. Coordinates are absolute axial hex (q, r) — (0,0) is map center, shared by all players.',
-    {},
-    async () => {
-      const check = requireRegistration();
-      if (check) return errorResult(check);
+    'Get the current game state from your perspective (non-blocking). Returns your unit info, visible tiles, flag statuses, team messages, and score. Coordinates are absolute axial hex (q, r) — (0,0) is map center.',
+    T,
+    async ({ token }) => {
+      const auth = requireAuth(token);
+      if (auth) return auth;
       const game = resolveGame(agentId);
       if (!game) return errorResult('No game in progress.');
       const state = game.getStateForAgent(agentId);
-      if (game.phase === 'finished') {
-        return jsonResult({ ...state, gameOver: true, winner: game.winner });
-      }
+      if (game.phase === 'finished') return jsonResult({ ...state, gameOver: true, winner: game.winner });
       return jsonResult(state);
     },
   );
 
   server.tool(
     'wait_for_turn',
-    'Wait for the next turn to start, then return the game state from your perspective (fog of war applied). This call hangs until the turn resolves — no need to poll. Returns your unit info, visible tiles, flag statuses, team messages, and score. Also returns the final state when the game ends. Coordinates are absolute axial hex (q, r) — (0,0) is map center, shared by all players.',
-    {},
-    async () => {
-      const check = requireRegistration();
-      if (check) return errorResult(check);
+    'Wait for the next turn to start, then return the game state from your perspective (fog of war applied). Hangs until the turn resolves — no need to poll. Also returns the final state when the game ends.',
+    T,
+    async ({ token }) => {
+      const auth = requireAuth(token);
+      if (auth) return auth;
       const game = resolveGame(agentId);
       if (!game) return errorResult('No game in progress. The game has not started yet.');
 
-      // If game is finished, return final state immediately
       if (game.phase === 'finished') {
         const state = game.getStateForAgent(agentId);
         return jsonResult({ ...state, gameOver: true, winner: game.winner });
       }
 
-      // If the agent hasn't submitted a move yet this turn, return current state immediately
-      // (they need to see the board before submitting)
       if (!game.moveSubmissions.has(agentId)) {
         const state = game.getStateForAgent(agentId);
         return jsonResult(state);
       }
 
-      // Agent already submitted — wait for the turn to resolve
       await waitForNextTurn(game.gameId, 60000);
 
-      // Return the new state after turn resolution
       const updatedGame = resolveGame(agentId);
       if (!updatedGame) return errorResult('Game ended.');
       const state = updatedGame.getStateForAgent(agentId);
-      if (updatedGame.phase === 'finished') {
-        return jsonResult({ ...state, gameOver: true, winner: updatedGame.winner });
-      }
+      if (updatedGame.phase === 'finished') return jsonResult({ ...state, gameOver: true, winner: updatedGame.winner });
       return jsonResult(state);
     },
   );
@@ -459,29 +476,22 @@ function createAgentMcpServer(
   server.tool(
     'submit_move',
     'Submit your movement path for this turn. Array of directions: N, NE, SE, S, SW, NW. Empty array to stay put.',
-    { path: z.array(z.string()).describe('Array of direction strings, e.g. ["N", "NE", "N"]') },
-    async ({ path }) => {
-      const check = requireRegistration();
-      if (check) return errorResult(check);
+    { ...T, path: z.array(z.string()).describe('Array of direction strings, e.g. ["N", "NE", "N"]') },
+    async ({ token, path }) => {
+      const auth = requireAuth(token);
+      if (auth) return auth;
       const game = resolveGame(agentId);
       if (!game) return errorResult('No game in progress.');
       if (game.phase !== 'in_progress') return errorResult('Cannot submit moves — game phase is: ' + game.phase);
 
       for (const dir of path) {
-        if (!isValidDirection(dir)) {
-          return errorResult(`Invalid direction "${dir}". Valid: ${VALID_DIRECTIONS.join(', ')}`);
-        }
+        if (!isValidDirection(dir)) return errorResult(`Invalid direction "${dir}". Valid: ${VALID_DIRECTIONS.join(', ')}`);
       }
 
       const directions = path as Direction[];
       const result = game.submitMove(agentId, directions);
       if (!result.success) return errorResult(result.error ?? 'Failed to submit move.');
-
-      // Notify turn loop that a move was submitted
-      if (onMoveSubmitted) {
-        onMoveSubmitted(game.gameId, agentId);
-      }
-
+      if (onMoveSubmitted) onMoveSubmitted(game.gameId, agentId);
       return jsonResult({ success: true, path: directions });
     },
   );
@@ -489,10 +499,10 @@ function createAgentMcpServer(
   server.tool(
     'team_chat',
     'Send a private message to your teammates. Works during class selection (pre-game) and during the game.',
-    { message: z.string().describe('The message to send to your team') },
-    async ({ message }) => {
-      const check = requireRegistration();
-      if (check) return errorResult(check);
+    { ...T, message: z.string().describe('The message to send to your team') },
+    async ({ token, message }) => {
+      const auth = requireAuth(token);
+      if (auth) return auth;
 
       // During class selection (pre_game), send via lobby teamChat
       const lobby = resolveLobby(agentId);
@@ -524,23 +534,12 @@ interface MCPSession {
   agentId: string;
 }
 
-/** Active MCP sessions keyed by MCP session ID */
 const sessions = new Map<string, MCPSession>();
 
 // ---------------------------------------------------------------------------
 // Express route handlers
 // ---------------------------------------------------------------------------
 
-/**
- * Mount the MCP Streamable HTTP endpoint on an existing Express app.
- *
- * @param app - Express app (typed as `any` per project convention)
- * @param resolveGame - function to find a GameManager for an agentId
- * @param resolveLobby - function to find a LobbyManager for an agentId
- * @param onMoveSubmitted - callback when an external agent submits a move
- * @param onChat - callback when an agent sends a chat message
- * @param onRegister - callback when an agent registers (for wiring into lobby system)
- */
 export function mountMcpEndpoint(
   app: any,
   resolveGame: GameResolver,
@@ -551,27 +550,19 @@ export function mountMcpEndpoint(
   onJoinLobby?: JoinLobbyCallback,
 ): void {
 
-  // POST /mcp — main MCP endpoint
   app.post('/mcp', async (req: any, res: any) => {
     const sessionId = req.headers['mcp-session-id'] as string | undefined;
 
     try {
-      // Existing session?
       if (sessionId && sessions.has(sessionId)) {
         const session = sessions.get(sessionId)!;
         await session.transport.handleRequest(req, res, req.body);
         return;
       }
 
-      // New initialization request — also accept if session ID is stale (server restarted)
       if (isInitializeRequest(req.body)) {
-        // No auth required — assign a new agent ID
         const agentId = `ext_${crypto.randomUUID().slice(0, 8)}`;
-
-        const sessionEntry: SessionEntry = {
-          agentId,
-          name: null, // not registered yet
-        };
+        const sessionEntry: SessionEntry = { agentId, name: null };
 
         const mcpServer = createAgentMcpServer(
           agentId, sessionEntry, resolveGame, resolveLobby,
@@ -583,7 +574,7 @@ export function mountMcpEndpoint(
           onsessioninitialized: (sid: string) => {
             sessions.set(sid, { transport, server: mcpServer, agentId });
             sessionRegistry.set(sid, sessionEntry);
-            console.log(`[MCP] Session ${sid} initialized for agent ${agentId} (unregistered)`);
+            console.log(`[MCP] Session ${sid} initialized for agent ${agentId}`);
           },
         });
 
@@ -601,7 +592,6 @@ export function mountMcpEndpoint(
         return;
       }
 
-      // Stale session ID — tell client to reconnect
       if (sessionId && !sessions.has(sessionId)) {
         res.status(404).json({
           jsonrpc: '2.0',
@@ -611,7 +601,6 @@ export function mountMcpEndpoint(
         return;
       }
 
-      // Bad request
       res.status(400).json({
         jsonrpc: '2.0',
         error: { code: -32000, message: 'Bad Request: no valid session ID provided' },
@@ -629,7 +618,6 @@ export function mountMcpEndpoint(
     }
   });
 
-  // GET /mcp — SSE stream for server-initiated messages
   app.get('/mcp', async (req: any, res: any) => {
     const sessionId = req.headers['mcp-session-id'] as string | undefined;
     if (!sessionId || !sessions.has(sessionId)) {
@@ -640,7 +628,6 @@ export function mountMcpEndpoint(
     await session.transport.handleRequest(req, res);
   });
 
-  // DELETE /mcp — session termination
   app.delete('/mcp', async (req: any, res: any) => {
     const sessionId = req.headers['mcp-session-id'] as string | undefined;
     if (!sessionId || !sessions.has(sessionId)) {
@@ -651,7 +638,7 @@ export function mountMcpEndpoint(
     await session.transport.handleRequest(req, res);
   });
 
-  console.log('[MCP] Streamable HTTP endpoint mounted at /mcp (no auth required, call register tool first)');
+  console.log('[MCP] Streamable HTTP endpoint mounted at /mcp (call signin tool to authenticate)');
 }
 
 // ---------------------------------------------------------------------------
@@ -662,9 +649,7 @@ export async function closeAllMcpSessions(): Promise<void> {
   for (const [sid, session] of sessions) {
     try {
       await session.transport.close();
-    } catch {
-      // ignore
-    }
+    } catch { /* ignore */ }
     sessions.delete(sid);
     sessionRegistry.delete(sid);
   }
