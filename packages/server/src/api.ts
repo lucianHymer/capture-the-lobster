@@ -83,6 +83,7 @@ export interface SpectatorState {
   mapRadius: number;
   visibleA: string[];  // hex keys visible to team A
   visibleB: string[];  // hex keys visible to team B
+  visibleByUnit: Record<string, string[]>;  // per-unit vision for spectator drill-down
   turnTimeoutMs: number;
   turnStartedAt: number;  // epoch ms
   /** Maps agent IDs to display names (e.g. "agent_1" -> "Pinchy") */
@@ -115,6 +116,8 @@ export interface GameRoom {
   turnTimeoutMs: number;
   /** Agent ID -> display name */
   handleMap: Record<string, string>;
+  /** Chat from the lobby phase (preserved for spectators) */
+  lobbyChat: { from: string; message: string; timestamp: number }[];
 }
 
 // ---------------------------------------------------------------------------
@@ -212,6 +215,7 @@ function buildSpectatorState(game: GameManager, handles: Record<string, string> 
 
   const visibleA = new Set<string>();
   const visibleB = new Set<string>();
+  const visibleByUnit: Record<string, string[]> = {};
   for (const u of units) {
     if (!u.alive) continue;
     const unitVision = getUnitVision(
@@ -219,6 +223,7 @@ function buildSpectatorState(game: GameManager, handles: Record<string, string> 
       walls,
       allHexKeys,
     );
+    visibleByUnit[u.id] = [...unitVision];
     const targetSet = u.team === 'A' ? visibleA : visibleB;
     for (const hex of unitVision) {
       targetSet.add(hex);
@@ -247,6 +252,7 @@ function buildSpectatorState(game: GameManager, handles: Record<string, string> 
     mapRadius: map.radius,
     visibleA: [...visibleA],
     visibleB: [...visibleB],
+    visibleByUnit,
     turnTimeoutMs: 30000,
     turnStartedAt: Date.now(),
     handles,
@@ -373,6 +379,7 @@ export class GameServer {
           });
 
           console.log(`[MCP] Agent ${agentId} joined lobby ${lobbyId}`);
+          lobbyRoom.runner.emitState();
           return { success: true };
         },
 
@@ -399,6 +406,7 @@ export class GameServer {
           }
 
           console.log(`[MCP] Agent ${agentId} created and joined lobby ${lobbyId}`);
+          lobbyRoom.runner.emitState();
           return { success: true, lobbyId };
         },
 
@@ -424,6 +432,11 @@ export class GameServer {
           }
           return result;
         },
+      },
+      // Chat callback: broadcast state to spectators on mid-turn chat
+      (gameId: string) => {
+        const room = this.games.get(gameId);
+        if (room) this.broadcastState(room);
       },
     );
   }
@@ -562,6 +575,7 @@ export class GameServer {
 
         const mcpUrl = `/mcp`;
         console.log(`[Register] External agent ${agentId} registered for lobby ${lobbyId}`);
+        lobbyRoom.runner.emitState();
         return res.status(201).json({ token, agentId, mcpUrl, lobbyId });
       }
 
@@ -612,7 +626,7 @@ export class GameServer {
 
       const state = getDelayedState(room);
       if (!state) return res.status(200).json({ phase: 'pre_game' });
-      res.json(state);
+      res.json({ ...state, lobbyChat: room.lobbyChat });
     });
 
     // Current spectator state (delayed)
@@ -770,8 +784,10 @@ export class GameServer {
     for (const [, room] of this.games) {
       if (!room.finished) count++;
     }
-    // Count active lobbies too (they run Claude bots for negotiation)
-    count += this.lobbies.size;
+    // Count active lobbies (but not failed/finished ones)
+    for (const [, room] of this.lobbies) {
+      if (!room.state || room.state.phase !== 'failed') count++;
+    }
     return count;
   }
 
@@ -826,6 +842,7 @@ export class GameServer {
       turnResolve: null,
       turnTimeoutMs: 30000,
       handleMap,
+      lobbyChat: [],
     };
 
     this.games.set(gameId, room);
@@ -1039,6 +1056,12 @@ export class GameServer {
     teamSize: number = 2,
     timeoutMs: number = 120000,
   ): { lobbyId: string } {
+    // Clean up failed/finished lobbies before creating a new one
+    for (const [id, room] of this.lobbies) {
+      if (room.state && room.state.phase === 'failed') {
+        this.lobbies.delete(id);
+      }
+    }
     const runner = new LobbyRunner(teamSize, timeoutMs, {
       onStateChange: (state) => {
         const lobbyRoom = this.lobbies.get(state.lobbyId);
@@ -1048,7 +1071,10 @@ export class GameServer {
         }
       },
       onGameCreated: (gameId, teamPlayers, handles) => {
-        this.createGameFromLobby(gameId, teamPlayers, handles);
+        // Grab lobby chat before transitioning to game
+        const lobbyRoom = this.lobbies.get(runner.lobby.lobbyId);
+        const lobbyChat = lobbyRoom?.state?.chat ?? [];
+        this.createGameFromLobby(gameId, teamPlayers, handles, lobbyChat);
       },
     });
 
@@ -1078,6 +1104,7 @@ export class GameServer {
     gameId: string,
     teamPlayers: { id: string; team: 'A' | 'B'; unitClass: UnitClass }[],
     handles: Record<string, string> = {},
+    lobbyChat: { from: string; message: string; timestamp: number }[] = [],
   ): void {
     const players = teamPlayers;
     const botHandles: string[] = [];
@@ -1127,6 +1154,7 @@ export class GameServer {
       turnResolve: null,
       turnTimeoutMs: 30000,
       handleMap,
+      lobbyChat,
     };
 
     this.games.set(gameId, room);

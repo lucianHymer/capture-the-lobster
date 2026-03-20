@@ -84,6 +84,9 @@ function mapServerState(raw: any): SpectatorGameState | null {
     mapRadius: data.mapRadius ?? 8,
     visibleA: new Set(data.visibleA ?? []),
     visibleB: new Set(data.visibleB ?? []),
+    visibleByUnit: Object.fromEntries(
+      Object.entries(data.visibleByUnit ?? {}).map(([id, hexes]: [string, any]) => [id, new Set(hexes as string[])])
+    ),
     turnTimeoutMs: data.turnTimeoutMs ?? 30000,
     turnStartedAt: data.turnStartedAt ?? Date.now(),
     handles: data.handles ?? {},
@@ -193,13 +196,22 @@ function ChatLog({
 // GamePage
 // ---------------------------------------------------------------------------
 
+interface LobbyChatMessage {
+  from: string;
+  message: string;
+  timestamp: number;
+}
+
 export default function GamePage() {
   const { id } = useParams<{ id: string }>();
   const [selectedTeam, setSelectedTeam] = useState<'A' | 'B' | 'all'>('all');
+  const [selectedUnit, setSelectedUnit] = useState<string | null>(null);
   const [gameState, setGameState] = useState<SpectatorGameState | null>(null);
   const [allKills, setAllKills] = useState<KillEvent[]>([]);
   const [connected, setConnected] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [lobbyChat, setLobbyChat] = useState<LobbyChatMessage[]>([]);
+  const [showLobbyChat, setShowLobbyChat] = useState(false);
   const wsRef = useRef<WebSocket | null>(null);
 
   // Fetch initial state via REST, then connect WebSocket for live updates
@@ -216,6 +228,10 @@ export default function GamePage() {
           if (mapped.kills.length > 0) {
             setAllKills(mapped.kills);
           }
+        }
+        // Grab lobby chat (only in REST response)
+        if (data.lobbyChat && Array.isArray(data.lobbyChat)) {
+          setLobbyChat(data.lobbyChat);
         }
       })
       .catch(() => {});
@@ -330,10 +346,18 @@ export default function GamePage() {
           )}
         </div>
         <div className="flex items-center gap-1">
+          {selectedUnit && (
+            <button
+              onClick={() => setSelectedUnit(null)}
+              className="px-2 py-1 text-xs rounded font-medium bg-yellow-900/60 text-yellow-300 hover:bg-yellow-800/60 mr-1 cursor-pointer"
+            >
+              {gameState.handles?.[selectedUnit] ?? unitLabels[selectedUnit] ?? selectedUnit} PoV ✕
+            </button>
+          )}
           {teamButtons.map((btn) => (
             <button
               key={btn.value}
-              onClick={() => setSelectedTeam(btn.value)}
+              onClick={() => { setSelectedTeam(btn.value); setSelectedUnit(null); }}
               className={`px-3 py-1 text-xs rounded font-medium transition-colors ${
                 selectedTeam === btn.value
                   ? btn.value === 'A'
@@ -360,6 +384,17 @@ export default function GamePage() {
             selectedTeam={selectedTeam}
             visibleA={gameState.visibleA}
             visibleB={gameState.visibleB}
+            visibleOverride={selectedUnit && gameState.visibleByUnit?.[selectedUnit] ? gameState.visibleByUnit[selectedUnit] : undefined}
+            onUnitClick={(unitId, team) => {
+              if (selectedUnit === unitId) {
+                // Click same unit again → deselect, back to team view
+                setSelectedUnit(null);
+                setSelectedTeam(team);
+              } else {
+                setSelectedUnit(unitId);
+                setSelectedTeam(team);
+              }
+            }}
           />
         </div>
 
@@ -389,6 +424,34 @@ export default function GamePage() {
               />
             </div>
           </div>
+
+          {/* Lobby chat (collapsible) */}
+          {lobbyChat.length > 0 && (
+            <div className="bg-gray-900 rounded-lg p-3 flex flex-col gap-2 max-h-[30%] overflow-hidden">
+              <button
+                onClick={() => setShowLobbyChat(!showLobbyChat)}
+                className="text-xs font-semibold text-gray-400 uppercase tracking-wider text-left flex items-center gap-1 cursor-pointer hover:text-gray-300"
+              >
+                <span className={`transition-transform ${showLobbyChat ? 'rotate-90' : ''}`}>&#9654;</span>
+                Lobby Chat ({lobbyChat.length})
+              </button>
+              {showLobbyChat && (
+                <div className="overflow-y-auto flex-1 scrollbar-thin">
+                  <div className="flex flex-col gap-1">
+                    {lobbyChat.map((m, i) => {
+                      const name = gameState.handles?.[m.from] ?? m.from;
+                      return (
+                        <div key={i} className="text-xs">
+                          <span className="font-semibold text-yellow-400">{name}:</span>{' '}
+                          <span className="text-gray-300">{m.message}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
         </div>
       </div>
 

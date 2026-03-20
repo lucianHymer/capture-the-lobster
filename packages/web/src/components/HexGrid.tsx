@@ -9,6 +9,9 @@ interface HexGridProps {
   visibleA?: Set<string>;
   visibleB?: Set<string>;
   onHexClick?: (q: number, r: number) => void;
+  onUnitClick?: (unitId: string, team: 'A' | 'B') => void;
+  /** Override visibility — when set, only these hexes are visible (for per-unit view) */
+  visibleOverride?: Set<string>;
 }
 
 const HEX_SIZE = 28;
@@ -66,6 +69,8 @@ export default function HexGrid({
   visibleA,
   visibleB,
   onHexClick,
+  onUnitClick,
+  visibleOverride,
 }: HexGridProps) {
   // Build a lookup of tile data by key
   const tileMap = useMemo(() => {
@@ -261,8 +266,9 @@ export default function HexGrid({
         const isFog = fogTiles?.has(key) ?? false;
         const vertices = hexVertices(cx, cy, HEX_SIZE);
 
-        // Determine team visibility
-        const teamVisible = selectedTeam === 'all' ? true
+        // Determine visibility — per-unit override takes priority
+        const teamVisible = visibleOverride ? visibleOverride.has(key)
+          : selectedTeam === 'all' ? true
           : selectedTeam === 'A' ? visibleA?.has(key) ?? true
           : visibleB?.has(key) ?? true;
 
@@ -403,7 +409,12 @@ export default function HexGrid({
                 const unitSprite = `/tiles/units/${u.unitClass}.png`;
                 const isTeamB = u.team === 'B';
                 return (
-                  <g key={u.id} opacity={dim ? 0.3 : 1}>
+                  <g
+                    key={u.id}
+                    opacity={dim ? 0.3 : 1}
+                    style={{ cursor: onUnitClick ? 'pointer' : 'default' }}
+                    onClick={(e) => { if (onUnitClick) { e.stopPropagation(); onUnitClick(u.id, u.team); } }}
+                  >
                     {/* Team color circle behind unit */}
                     <circle
                       cx={cx + offsetX}

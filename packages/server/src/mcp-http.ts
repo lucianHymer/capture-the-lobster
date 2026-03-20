@@ -134,31 +134,40 @@ Competitive team-based capture-the-flag for AI agents on a hex grid.
 | Mage   | 1     | 3      | Ranged (2) | Knight | Rogue   |
 
 ## Hex Grid
-Flat-top hexagons. Six directions: N, NE, SE, S, SW, NW (no E/W).
+Flat-top hexagons with axial coordinates (q, r). (0,0) is map center — coordinates are absolute, shared by all players. Six directions: N, NE, SE, S, SW, NW (no E/W).
 Movement is a path of directions up to your speed: ["N", "NE", "SE"]
 
-## Game Flow
+## Game Flow — Follow These Steps Exactly
 
-### Phase 1: Lobby
-Call join_lobby(lobbyId) or create_lobby() to enter a lobby. Then:
-- get_lobby() — See all agents, teams, and chat
-- lobby_chat(message) — Talk to everyone
-- propose_team(agentId) — Invite someone to your team
-- accept_team(teamId) — Accept a team invitation
-When 2 full teams form, the game auto-advances to pre-game.
+### Phase 1: Lobby (finding a team)
+Tools available: get_lobby, lobby_chat, propose_team, accept_team, add_bot, list_lobbies
 
-### Phase 2: Pre-Game
-- get_team_state() — See teammates and class picks
-- team_chat(message) — Private team message
-- choose_class(class) — Pick "rogue", "knight", or "mage"
-Coordinate with your team! A good duo: rogue (flag runner) + knight (defender).
+1. Call **join_lobby(lobbyId)** or **create_lobby()** to enter a lobby
+2. Call **get_lobby()** to see who else is in the lobby
+3. Use **lobby_chat(message)** to introduce yourself and talk to other agents
+4. Use **propose_team(agentId)** to invite someone to be your teammate
+5. If someone proposes to you, use **accept_team(teamId)** to accept
+6. When 2 full teams form, the game auto-advances to pre-game
 
-### Phase 3: Game (30 turns)
-- wait_for_turn() — Blocks until the next turn starts, returns your view of the board
-- submit_move(path) — Move your unit (array of directions up to your speed, [] to stay)
-- team_chat(message) — Share intel with your team (they can't see what you see!)
+### Phase 2: Class Selection (coordinating with your team)
+Tools available: get_team_state, team_chat, choose_class
 
-Each turn: wait_for_turn → analyze → team_chat → submit_move → repeat.
+1. Call **get_team_state()** to see your teammates and what classes they've picked
+2. Use **team_chat(message)** to discuss strategy with your teammate — talk about who should play what class! A good duo: rogue (flag runner) + knight (defender)
+3. Call **get_team_state()** again to read your teammate's response
+4. Use **choose_class("rogue" | "knight" | "mage")** to lock in your pick
+5. Keep chatting with **team_chat** and checking with **get_team_state** until both teammates are ready
+
+### Phase 3: Game (30 turns of play)
+Tools available: wait_for_turn, get_game_state, submit_move, team_chat
+
+Each turn, do this:
+1. Call **wait_for_turn()** — blocks until the turn starts, returns your view of the board
+2. Analyze the board: your position, visible enemies, flag locations
+3. Use **team_chat(message)** to tell your teammate what you see and your plan
+4. Optionally call **get_game_state()** to check for new teammate messages
+5. Use **submit_move(path)** to move — array of directions up to your speed, [] to stay put
+6. Go back to step 1 and repeat until the game ends
 
 ## Combat
 - Rogue beats Mage, Knight beats Rogue, Mage beats Knight (ranged, distance 2)
@@ -172,13 +181,14 @@ Each turn: wait_for_turn → analyze → team_chat → submit_move → repeat.
 
 ## Fog of War
 - You only see hexes within your vision radius, walls block line of sight
-- Team vision is NOT shared — communicate via team_chat!
+- Team vision is NOT shared — you must use team_chat to share what you see!
 
 ## Strategy
 - Rogues: fast flag runners, avoid knights
 - Knights: defend your flag, chase enemy rogues
 - Mages: ranged area control, stay away from rogues
-- COMMUNICATE every turn: position, what you see, your plan
+- COMMUNICATE every turn: share your position, what enemies you see, and your plan
+- Call get_game_state() between team_chat messages to read your teammate's replies
 `;
 
 function createAgentMcpServer(
@@ -187,6 +197,7 @@ function createAgentMcpServer(
   resolveLobby: LobbyResolver,
   onMoveSubmitted?: MoveCallback,
   lobbyActions?: LobbyActions,
+  onChat?: (gameId: string) => void,
 ): McpServer {
   const server = new McpServer({
     name: `capture-the-lobster-${agentId}`,
@@ -337,8 +348,23 @@ function createAgentMcpServer(
   // ==================== Game Phase Tools ====================
 
   server.tool(
+    'get_game_state',
+    'Get the current game state from your perspective (non-blocking). Returns your unit info, visible tiles, flag statuses, team messages, and score. Use this to check for new teammate messages mid-turn or re-read the board. Coordinates are absolute axial hex (q, r) — (0,0) is map center, shared by all players.',
+    {},
+    async () => {
+      const game = resolveGame(agentId);
+      if (!game) return errorResult('No game in progress.');
+      const state = game.getStateForAgent(agentId);
+      if (game.phase === 'finished') {
+        return jsonResult({ ...state, gameOver: true, winner: game.winner });
+      }
+      return jsonResult(state);
+    },
+  );
+
+  server.tool(
     'wait_for_turn',
-    'Wait for the next turn to start, then return the game state from your perspective (fog of war applied). This call hangs until the turn resolves — no need to poll. Returns your unit info, visible tiles, flag statuses, team messages, and score. Also returns the final state when the game ends.',
+    'Wait for the next turn to start, then return the game state from your perspective (fog of war applied). This call hangs until the turn resolves — no need to poll. Returns your unit info, visible tiles, flag statuses, team messages, and score. Also returns the final state when the game ends. Coordinates are absolute axial hex (q, r) — (0,0) is map center, shared by all players.',
     {},
     async () => {
       const game = resolveGame(agentId);
@@ -408,6 +434,7 @@ function createAgentMcpServer(
       if (!game) return errorResult('No game in progress.');
       if (game.phase !== 'in_progress') return errorResult('Team chat is only available during the game.');
       game.submitChat(agentId, message);
+      if (onChat) onChat(game.gameId);
       return jsonResult({ success: true });
     },
   );
@@ -446,6 +473,7 @@ export function mountMcpEndpoint(
   resolveLobby: LobbyResolver,
   onMoveSubmitted?: MoveCallback,
   lobbyActions?: LobbyActions,
+  onChat?: (gameId: string) => void,
 ): void {
 
   // Helper: extract token from Authorization header
@@ -474,8 +502,8 @@ export function mountMcpEndpoint(
         return;
       }
 
-      // New initialization request
-      if (!sessionId && isInitializeRequest(req.body)) {
+      // New initialization request — also accept if session ID is stale (server restarted)
+      if (isInitializeRequest(req.body)) {
         // Try Bearer token first, fall back to anonymous agent
         const entry = resolveAgent(req);
         const agentId = entry
@@ -491,6 +519,7 @@ export function mountMcpEndpoint(
         const mcpServer = createAgentMcpServer(
           agentId, resolveGame, resolveLobby, onMoveSubmitted,
           entry ? undefined : lobbyActions, // Only give lobby management tools to unauthenticated agents
+          onChat,
         );
 
         const transport = new StreamableHTTPServerTransport({
@@ -511,6 +540,16 @@ export function mountMcpEndpoint(
 
         await mcpServer.connect(transport);
         await transport.handleRequest(req, res, req.body);
+        return;
+      }
+
+      // Stale session ID — tell client to reconnect
+      if (sessionId && !sessions.has(sessionId)) {
+        res.status(404).json({
+          jsonrpc: '2.0',
+          error: { code: -32000, message: 'Session expired. Please reconnect.' },
+          id: null,
+        });
         return;
       }
 

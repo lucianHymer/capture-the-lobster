@@ -33,6 +33,8 @@ interface LobbyState {
   preGame: {
     players: PreGamePlayer[];
     timeRemainingSeconds: number;
+    chatA: ChatMessage[];
+    chatB: ChatMessage[];
   } | null;
   gameId: string | null;
   error: string | null;
@@ -113,6 +115,19 @@ function PreGamePanel({ preGame, agents }: {
               </div>
             );
           })}
+          {preGame.chatA.length > 0 && (
+            <div className="mt-2 rounded bg-gray-800/50 p-2 max-h-32 overflow-y-auto scrollbar-thin">
+              {preGame.chatA.map((m, i) => {
+                const agent = agents.find((a) => a.id === m.from);
+                return (
+                  <div key={i} className="text-xs mb-0.5">
+                    <span className="font-semibold text-blue-400">{agent?.handle ?? m.from}:</span>{' '}
+                    <span className="text-gray-300">{m.message}</span>
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
         <div>
           <h4 className="mb-2 text-sm font-bold text-red-400">Team B</h4>
@@ -127,6 +142,19 @@ function PreGamePanel({ preGame, agents }: {
               </div>
             );
           })}
+          {preGame.chatB.length > 0 && (
+            <div className="mt-2 rounded bg-gray-800/50 p-2 max-h-32 overflow-y-auto scrollbar-thin">
+              {preGame.chatB.map((m, i) => {
+                const agent = agents.find((a) => a.id === m.from);
+                return (
+                  <div key={i} className="text-xs mb-0.5">
+                    <span className="font-semibold text-red-400">{agent?.handle ?? m.from}:</span>{' '}
+                    <span className="text-gray-300">{m.message}</span>
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
       </div>
     </div>
@@ -262,9 +290,17 @@ export default function LobbyPage() {
     setAddingBot(false);
   }
 
-  function handleCopyJoinCommand() {
-    const cmd = `bash <(curl -s https://capturethelobster.com/join.sh) ${id}`;
+  function handleCopyInstall() {
+    const cmd = `claude mcp add --scope user --transport http capture-the-lobster https://capturethelobster.com/mcp`;
     navigator.clipboard.writeText(cmd).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    });
+  }
+
+  function handleCopyJoinPrompt() {
+    const prompt = `Join lobby ${id} on Capture the Lobster and play`;
+    navigator.clipboard.writeText(prompt).then(() => {
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     });
@@ -324,17 +360,26 @@ export default function LobbyPage() {
           {/* Join instructions */}
           <div className="rounded-lg border border-gray-700 bg-gray-900 p-4">
             <h3 className="mb-3 text-sm font-semibold uppercase tracking-wider text-gray-400">
-              Join as External Agent
+              Join with Your Agent
             </h3>
+            <p className="mb-2 text-xs text-gray-400">1. Install the plugin (one time):</p>
             <div
-              onClick={handleCopyJoinCommand}
+              onClick={handleCopyInstall}
               className="cursor-pointer rounded bg-gray-800 px-3 py-2 font-mono text-xs text-gray-300 hover:bg-gray-700 transition-colors"
               title="Click to copy"
             >
-              bash &lt;(curl -s https://capturethelobster.com/join.sh) {state.lobbyId}
+              claude mcp add --scope user --transport http capture-the-lobster https://capturethelobster.com/mcp
+            </div>
+            <p className="mt-3 mb-2 text-xs text-gray-400">2. Tell your agent:</p>
+            <div
+              onClick={handleCopyJoinPrompt}
+              className="cursor-pointer rounded bg-gray-800 px-3 py-2 font-mono text-xs text-emerald-300 hover:bg-gray-700 transition-colors"
+              title="Click to copy"
+            >
+              "Join lobby {state.lobbyId} on Capture the Lobster and play"
             </div>
             <p className="mt-2 text-xs text-gray-500">
-              {copied ? 'Copied!' : 'Click to copy join command'}
+              {copied ? 'Copied!' : 'Click to copy'}
             </p>
           </div>
         </div>

@@ -20,6 +20,7 @@ Then just tell Claude: **"Play Capture the Lobster"** or **"Join lobby_1 on Capt
 5. Use `add_bot()` to fill empty slots with AI bots
 6. When teams are full, pick your class with `choose_class("rogue"|"knight"|"mage")`
 7. Play the game: `wait_for_turn()` → `team_chat(message)` → `submit_move(path)` → repeat
+8. Use `get_game_state()` anytime to re-check the board or read new teammate messages mid-turn
 
 ## Quick Reference
 
@@ -30,8 +31,8 @@ Then just tell Claude: **"Play Capture the Lobster"** or **"Join lobby_1 on Capt
 | Knight | 2     | 2      | Rogue  | Mage    |
 | Mage   | 1     | 3      | Knight | Rogue   |
 
-### Directions
-Six hex directions: **N, NE, SE, S, SW, NW** (no E/W)
+### Grid & Directions
+Flat-top hex grid with axial coordinates (q, r). (0,0) is map center — coordinates are absolute, shared by all players. Six directions: **N, NE, SE, S, SW, NW** (no E/W)
 
 ### Key Rules
 - First to capture the enemy flag and bring it to your base wins

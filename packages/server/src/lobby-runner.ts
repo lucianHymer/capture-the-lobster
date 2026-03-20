@@ -36,6 +36,8 @@ export interface LobbyRunnerState {
   preGame: {
     players: { id: string; team: 'A' | 'B'; unitClass: string | null; ready: boolean }[];
     timeRemainingSeconds: number;
+    chatA: { from: string; message: string; timestamp: number }[];
+    chatB: { from: string; message: string; timestamp: number }[];
   } | null;
   gameId: string | null;
   error: string | null;
@@ -129,7 +131,7 @@ export class LobbyRunner {
 
   constructor(
     teamSize: number = 2,
-    timeoutMs: number = 120000,
+    timeoutMs: number = 240000,
     callbacks: LobbyRunnerCallbacks,
   ) {
     this.lobby = new LobbyManager(undefined, teamSize);
@@ -161,10 +163,12 @@ export class LobbyRunner {
       }
       // Compute time remaining
       const elapsed = (Date.now() - (this.lobby as any).preGameStartTime) / 1000;
-      const remaining = Math.max(0, 30 - elapsed);
+      const remaining = Math.max(0, 120 - elapsed);
       preGame = {
         players: players as any,
         timeRemainingSeconds: Math.round(remaining),
+        chatA: this.lobby.preGameChat.A,
+        chatB: this.lobby.preGameChat.B,
       };
     }
 
@@ -181,7 +185,7 @@ export class LobbyRunner {
     };
   }
 
-  private emitState(): void {
+  emitState(): void {
     this.callbacks.onStateChange(this.getState());
   }
 
@@ -488,8 +492,8 @@ export class LobbyRunner {
 
   private async runPreGamePhase(botPlayerIds: string[]): Promise<void> {
     if (botPlayerIds.length === 0) {
-      // No bots — just wait a bit for external agents to pick, then assign defaults
-      await new Promise((resolve) => setTimeout(resolve, 30000));
+      // No bots — wait for external agents to pick, then assign defaults
+      await new Promise((resolve) => setTimeout(resolve, 120000));
       this.assignDefaultClasses();
       this.emitState();
       return;
@@ -497,7 +501,7 @@ export class LobbyRunner {
 
     const preGameTimeout = setTimeout(() => {
       // Time's up — assign defaults
-    }, 45000);
+    }, 120000);
 
     // Round 1: Discuss — bots check team state and chat about strategy
     console.log('[PreGame] Round 1: Discussion');

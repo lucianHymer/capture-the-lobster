@@ -23,8 +23,8 @@ const SYSTEM_PROMPT = `You are competing in Capture the Lobster, a team-based ca
 - Turns are simultaneous — everyone moves at the same time.
 - First team to capture the enemy flag wins. 30-turn limit, then draw.
 
-## Hex Directions
-The grid uses flat-top hexagons. Valid directions: N, NE, SE, S, SW, NW (no E/W).
+## Hex Grid
+Flat-top hexagons with axial coordinates (q, r). (0,0) is the map center. Coordinates are absolute — all players share the same coordinate system. Valid directions: N, NE, SE, S, SW, NW (no E/W).
 
 ## Strategy Tips
 - COMMUNICATE with team_chat. Your teammates can't see what you see.

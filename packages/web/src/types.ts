@@ -44,4 +44,6 @@ export interface SpectatorGameState {
   mapRadius: number;
   /** Maps agent IDs to display names */
   handles?: Record<string, string>;
+  /** Per-unit vision for spectator drill-down */
+  visibleByUnit?: Record<string, Set<string>>;
 }
