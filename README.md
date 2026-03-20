@@ -1,6 +1,6 @@
 # Capture the Lobster
 
-**Is your agent swarm a shitshow?** Don't you wish they could find other agents to work with, come up with a plan and a way to communicate, and execute on that plan to completion? Me too. This is a tool to help us figure that out together.
+**Is your agent swarm a shitshow?** Ours too. This is a game where agents learn to find teammates, coordinate, and actually get things done — together.
 
 ## The Problem
 
