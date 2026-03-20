@@ -211,6 +211,8 @@ export default function GamePage() {
   const [connected, setConnected] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [lobbyChat, setLobbyChat] = useState<LobbyChatMessage[]>([]);
+  const [preGameChatA, setPreGameChatA] = useState<LobbyChatMessage[]>([]);
+  const [preGameChatB, setPreGameChatB] = useState<LobbyChatMessage[]>([]);
   const [showLobbyChat, setShowLobbyChat] = useState(false);
   const wsRef = useRef<WebSocket | null>(null);
 
@@ -232,6 +234,12 @@ export default function GamePage() {
         // Grab lobby chat (only in REST response)
         if (data.lobbyChat && Array.isArray(data.lobbyChat)) {
           setLobbyChat(data.lobbyChat);
+        }
+        if (data.preGameChatA && Array.isArray(data.preGameChatA)) {
+          setPreGameChatA(data.preGameChatA);
+        }
+        if (data.preGameChatB && Array.isArray(data.preGameChatB)) {
+          setPreGameChatB(data.preGameChatB);
         }
       })
       .catch(() => {});
@@ -425,33 +433,44 @@ export default function GamePage() {
             </div>
           </div>
 
-          {/* Lobby chat (collapsible) */}
-          {lobbyChat.length > 0 && (
-            <div className="bg-gray-900 rounded-lg p-3 flex flex-col gap-2 max-h-[30%] overflow-hidden">
-              <button
-                onClick={() => setShowLobbyChat(!showLobbyChat)}
-                className="text-xs font-semibold text-gray-400 uppercase tracking-wider text-left flex items-center gap-1 cursor-pointer hover:text-gray-300"
-              >
-                <span className={`transition-transform ${showLobbyChat ? 'rotate-90' : ''}`}>&#9654;</span>
-                Lobby Chat ({lobbyChat.length})
-              </button>
-              {showLobbyChat && (
-                <div className="overflow-y-auto flex-1 scrollbar-thin">
-                  <div className="flex flex-col gap-1">
-                    {lobbyChat.map((m, i) => {
-                      const name = gameState.handles?.[m.from] ?? m.from;
-                      return (
-                        <div key={i} className="text-xs">
-                          <span className="font-semibold text-yellow-400">{name}:</span>{' '}
-                          <span className="text-gray-300">{m.message}</span>
-                        </div>
-                      );
-                    })}
+          {/* Pre-game / Lobby chat (collapsible) */}
+          {(() => {
+            const preGameChat = selectedTeam === 'A' ? preGameChatA : selectedTeam === 'B' ? preGameChatB : [];
+            const chatToShow = preGameChat.length > 0 ? preGameChat : lobbyChat;
+            const chatLabel = preGameChat.length > 0
+              ? `Pre-Game Chat (${preGameChat.length})`
+              : `Lobby Chat (${lobbyChat.length})`;
+            const chatColor = preGameChat.length > 0
+              ? (selectedTeam === 'A' ? 'text-blue-400' : 'text-red-400')
+              : 'text-yellow-400';
+            if (chatToShow.length === 0) return null;
+            return (
+              <div className="bg-gray-900 rounded-lg p-3 flex flex-col gap-2 max-h-[30%] overflow-hidden">
+                <button
+                  onClick={() => setShowLobbyChat(!showLobbyChat)}
+                  className="text-xs font-semibold text-gray-400 uppercase tracking-wider text-left flex items-center gap-1 cursor-pointer hover:text-gray-300"
+                >
+                  <span className={`transition-transform ${showLobbyChat ? 'rotate-90' : ''}`}>&#9654;</span>
+                  {chatLabel}
+                </button>
+                {showLobbyChat && (
+                  <div className="overflow-y-auto flex-1 scrollbar-thin">
+                    <div className="flex flex-col gap-1">
+                      {chatToShow.map((m, i) => {
+                        const name = gameState.handles?.[m.from] ?? m.from;
+                        return (
+                          <div key={i} className="text-xs">
+                            <span className={`font-semibold ${chatColor}`}>{name}:</span>{' '}
+                            <span className="text-gray-300">{m.message}</span>
+                          </div>
+                        );
+                      })}
+                    </div>
                   </div>
-                </div>
-              )}
-            </div>
-          )}
+                )}
+              </div>
+            );
+          })()}
         </div>
       </div>
 

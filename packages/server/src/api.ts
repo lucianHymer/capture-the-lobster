@@ -118,6 +118,9 @@ export interface GameRoom {
   handleMap: Record<string, string>;
   /** Chat from the lobby phase (preserved for spectators) */
   lobbyChat: { from: string; message: string; timestamp: number }[];
+  /** Pre-game team chat (preserved for spectators) */
+  preGameChatA: { from: string; message: string; timestamp: number }[];
+  preGameChatB: { from: string; message: string; timestamp: number }[];
 }
 
 // ---------------------------------------------------------------------------
@@ -626,7 +629,7 @@ export class GameServer {
 
       const state = getDelayedState(room);
       if (!state) return res.status(200).json({ phase: 'pre_game' });
-      res.json({ ...state, lobbyChat: room.lobbyChat });
+      res.json({ ...state, lobbyChat: room.lobbyChat, preGameChatA: room.preGameChatA, preGameChatB: room.preGameChatB });
     });
 
     // Current spectator state (delayed)
@@ -843,6 +846,8 @@ export class GameServer {
       turnTimeoutMs: 30000,
       handleMap,
       lobbyChat: [],
+      preGameChatA: [],
+      preGameChatB: [],
     };
 
     this.games.set(gameId, room);
@@ -1074,7 +1079,9 @@ export class GameServer {
         // Grab lobby chat before transitioning to game
         const lobbyRoom = this.lobbies.get(runner.lobby.lobbyId);
         const lobbyChat = lobbyRoom?.state?.chat ?? [];
-        this.createGameFromLobby(gameId, teamPlayers, handles, lobbyChat);
+        const preGameChatA = runner.lobby.preGameChat?.A ?? [];
+        const preGameChatB = runner.lobby.preGameChat?.B ?? [];
+        this.createGameFromLobby(gameId, teamPlayers, handles, lobbyChat, preGameChatA, preGameChatB);
       },
     });
 
@@ -1105,6 +1112,8 @@ export class GameServer {
     teamPlayers: { id: string; team: 'A' | 'B'; unitClass: UnitClass }[],
     handles: Record<string, string> = {},
     lobbyChat: { from: string; message: string; timestamp: number }[] = [],
+    preGameChatA: { from: string; message: string; timestamp: number }[] = [],
+    preGameChatB: { from: string; message: string; timestamp: number }[] = [],
   ): void {
     const players = teamPlayers;
     const botHandles: string[] = [];
@@ -1155,6 +1164,8 @@ export class GameServer {
       turnTimeoutMs: 30000,
       handleMap,
       lobbyChat,
+      preGameChatA,
+      preGameChatB,
     };
 
     this.games.set(gameId, room);
