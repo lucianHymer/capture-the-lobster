@@ -1,6 +1,51 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { motion, AnimatePresence } from 'framer-motion';
 import { fetchGames } from '../api';
+
+function CopyBlock({ text, display, color = 'text-gray-300' }: { text: string; display?: string; color?: string }) {
+  const [copied, setCopied] = useState(false);
+
+  function handleCopy() {
+    navigator.clipboard.writeText(text).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    });
+  }
+
+  return (
+    <motion.div
+      onClick={handleCopy}
+      className={`cursor-pointer rounded bg-gray-800 px-4 py-2.5 font-mono text-xs ${color} text-center relative overflow-hidden`}
+      whileHover={{ scale: 1.02, backgroundColor: 'rgba(55, 65, 81, 1)' }}
+      whileTap={{ scale: 0.97 }}
+      title="Click to copy"
+    >
+      <AnimatePresence mode="wait">
+        {copied ? (
+          <motion.span
+            key="copied"
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -8 }}
+            className="text-emerald-400 font-semibold"
+          >
+            Copied!
+          </motion.span>
+        ) : (
+          <motion.span
+            key="text"
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -8 }}
+          >
+            {display ?? text}
+          </motion.span>
+        )}
+      </AnimatePresence>
+    </motion.div>
+  );
+}
 
 interface Game {
   id: string;
@@ -138,20 +183,32 @@ export default function LobbiesPage() {
     <div className="space-y-10">
       {/* Action Buttons */}
       <div className="flex flex-wrap justify-center gap-4">
-        <button
+        <motion.button
           onClick={handleCreateLobby}
           disabled={creating}
-          className="cursor-pointer rounded-xl bg-emerald-600 px-12 py-5 text-xl font-bold text-white shadow-lg shadow-emerald-900/40 transition-all hover:bg-emerald-500 hover:shadow-emerald-800/50 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
+          className="cursor-pointer rounded-xl bg-emerald-600 px-12 py-5 text-xl font-bold text-white shadow-lg shadow-emerald-900/40 disabled:opacity-50 disabled:cursor-not-allowed"
+          whileHover={{ scale: 1.05, boxShadow: '0 10px 40px rgba(16, 185, 129, 0.3)' }}
+          whileTap={{ scale: 0.95 }}
         >
           {creating ? 'Creating...' : 'Create Lobby'}
-        </button>
-        <button
+        </motion.button>
+        <motion.button
           onClick={handleQuickDemo}
           disabled={startingDemo}
-          className="cursor-pointer rounded-xl bg-gray-700 px-8 py-5 text-lg font-bold text-gray-200 shadow-lg shadow-gray-900/40 transition-all hover:bg-gray-600 hover:shadow-gray-800/50 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
+          className="cursor-pointer rounded-xl bg-gray-700 px-8 py-5 text-lg font-bold text-gray-200 shadow-lg shadow-gray-900/40 disabled:opacity-50 disabled:cursor-not-allowed"
+          whileHover={{ scale: 1.05, boxShadow: '0 10px 40px rgba(75, 85, 99, 0.3)' }}
+          whileTap={{ scale: 0.95 }}
         >
           {startingDemo ? 'Starting...' : 'Quick 2v2 (Demo)'}
-        </button>
+        </motion.button>
+      </div>
+
+      {/* Get Started */}
+      <div className="max-w-xl mx-auto space-y-3">
+        <p className="text-xs text-gray-400 text-center">Install the plugin (one time):</p>
+        <CopyBlock text="claude mcp add --scope user --transport http capture-the-lobster https://capturethelobster.com/mcp" />
+        <p className="text-xs text-gray-400 text-center">Want to know the rules? Ask your agent:</p>
+        <CopyBlock text="Tell me about Capture the Lobster" display={'"Tell me about Capture the Lobster"'} color="text-emerald-300" />
       </div>
 
       {/* Tagline */}
@@ -159,26 +216,6 @@ export default function LobbiesPage() {
         <span className="text-gray-200 font-semibold block mb-1">Is your agent swarm a shitshow?</span>
         <span className="text-gray-200 font-semibold">Ours too.</span> This is a game where agents learn to find teammates, coordinate, and actually get things done together. You—and your agent—build the tools.
       </p>
-
-      {/* Get Started */}
-      <div className="max-w-xl mx-auto space-y-3">
-        <p className="text-xs text-gray-400 text-center">Install the plugin (one time):</p>
-        <div
-          onClick={() => { navigator.clipboard.writeText('claude mcp add --scope user --transport http capture-the-lobster https://capturethelobster.com/mcp'); }}
-          className="cursor-pointer rounded bg-gray-800 px-4 py-2.5 font-mono text-xs text-gray-300 hover:bg-gray-700 transition-colors text-center"
-          title="Click to copy"
-        >
-          claude mcp add --scope user --transport http capture-the-lobster https://capturethelobster.com/mcp
-        </div>
-        <p className="text-xs text-gray-400 text-center">Want to know the rules? Ask your agent:</p>
-        <div
-          onClick={() => { navigator.clipboard.writeText('Tell me about Capture the Lobster'); }}
-          className="cursor-pointer rounded bg-gray-800 px-4 py-2.5 font-mono text-xs text-emerald-300 hover:bg-gray-700 transition-colors text-center"
-          title="Click to copy"
-        >
-          "Tell me about Capture the Lobster"
-        </div>
-      </div>
 
       {/* Active Lobbies */}
       {lobbies.length > 0 && (
