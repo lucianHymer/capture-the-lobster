@@ -29,11 +29,12 @@ import { runAllBotsTurn, createBotSessions, BotSession } from './claude-bot.js';
 import { LobbyRunner, LobbyRunnerState } from './lobby-runner.js';
 import {
   mountMcpEndpoint,
-  generateToken,
-  tokenRegistry,
   closeAllMcpSessions,
-  TokenEntry,
   notifyTurnResolved,
+  getAgentName,
+  setAgentLobby,
+  setAgentGame,
+  getSessionByAgentId,
 } from './mcp-http.js';
 
 // ---------------------------------------------------------------------------
@@ -352,94 +353,42 @@ export class GameServer {
       (gameId: string, agentId: string) => {
         this.onMoveSubmitted(gameId, agentId);
       },
-      // Lobby actions for unauthenticated MCP agents
-      {
-        joinLobby: (agentId: string, lobbyId: string) => {
-          const lobbyRoom = this.lobbies.get(lobbyId);
-          if (!lobbyRoom) return { success: false, error: 'Lobby not found' };
-          if (!lobbyRoom.lobbyManager) return { success: false, error: 'Lobby not initialized' };
-
-          // Check if already in this lobby
-          if (this.agentToLobby.get(agentId) === lobbyId) {
-            return { success: true }; // idempotent
-          }
-
-          // Track the slot
-          lobbyRoom.externalSlots.set(agentId, {
-            token: '',
-            agentId,
-            connected: true,
-          });
-
-          // Map agent -> lobby for MCP resolver
-          this.agentToLobby.set(agentId, lobbyId);
-
-          // Add agent to the lobby manager
-          lobbyRoom.lobbyManager.addAgent({
-            id: agentId,
-            handle: `Agent-${agentId.slice(4)}`,
-            elo: 1000,
-          });
-
-          console.log(`[MCP] Agent ${agentId} joined lobby ${lobbyId}`);
-          lobbyRoom.runner.emitState();
-          return { success: true };
-        },
-
-        createLobby: (agentId: string, teamSize: number) => {
-          if (this.activeGameCount() >= this.maxConcurrentGames) {
-            return { success: false, error: 'Server busy — a lobby or game is already running. Wait for it to finish.' };
-          }
-          const { lobbyId } = this.createLobbyGame(teamSize);
-
-          // Auto-join the creator
-          const lobbyRoom = this.lobbies.get(lobbyId);
-          if (lobbyRoom?.lobbyManager) {
-            lobbyRoom.externalSlots.set(agentId, {
-              token: '',
-              agentId,
-              connected: true,
-            });
-            this.agentToLobby.set(agentId, lobbyId);
-            lobbyRoom.lobbyManager.addAgent({
-              id: agentId,
-              handle: `Agent-${agentId.slice(4)}`,
-              elo: 1000,
-            });
-          }
-
-          console.log(`[MCP] Agent ${agentId} created and joined lobby ${lobbyId}`);
-          lobbyRoom.runner.emitState();
-          return { success: true, lobbyId };
-        },
-
-        addBot: (lobbyId: string) => {
-          const lobbyRoom = this.lobbies.get(lobbyId);
-          if (!lobbyRoom) return { success: false, error: 'Lobby not found' };
-          const result = lobbyRoom.runner.addBot();
-          return { success: true, agentId: result.agentId, handle: result.handle };
-        },
-
-        listLobbies: () => {
-          const result: { lobbyId: string; phase: string; agentCount: number; teamSize: number }[] = [];
-          for (const [lobbyId, room] of this.lobbies) {
-            const state = room.state ?? room.runner.getState();
-            if (state.phase === 'forming' || state.phase === 'pre_game') {
-              result.push({
-                lobbyId,
-                phase: state.phase,
-                agentCount: state.agents.length,
-                teamSize: (state as any).teamSize ?? 2,
-              });
-            }
-          }
-          return result;
-        },
-      },
       // Chat callback: broadcast state to spectators on mid-turn chat
       (gameId: string) => {
         const room = this.games.get(gameId);
         if (room) this.broadcastState(room);
+      },
+      // Register callback: log when an agent registers
+      (agentId: string, name: string) => {
+        console.log(`[MCP] Agent ${agentId} registered as "${name}"`);
+      },
+      // Join lobby callback: wire the agent into the lobby system
+      (agentId: string, name: string, lobbyId: string) => {
+        const lobbyRoom = this.lobbies.get(lobbyId);
+        if (!lobbyRoom) return { success: false, error: 'Lobby not found' };
+
+        // Track the slot
+        lobbyRoom.externalSlots.set(agentId, {
+          token: '',
+          agentId,
+          connected: true,
+        });
+
+        // Map agent -> lobby for MCP resolver
+        this.agentToLobby.set(agentId, lobbyId);
+
+        // Add agent to the lobby manager
+        if (lobbyRoom.lobbyManager) {
+          lobbyRoom.lobbyManager.addAgent({
+            id: agentId,
+            handle: name,
+            elo: 1000,
+          });
+        }
+
+        console.log(`[MCP] Agent ${agentId} (${name}) joined lobby ${lobbyId}`);
+        lobbyRoom.runner.emitState();
+        return { success: true };
       },
     );
   }
@@ -537,74 +486,7 @@ export class GameServer {
       res.status(201).json({ agentId, handle });
     });
 
-    // Register an external agent for a lobby
-    router.post('/register', (req, res) => {
-      const lobbyId = req.body?.lobbyId as string | undefined;
-      const gameId = req.body?.gameId as string | undefined;
-
-      if (!lobbyId && !gameId) {
-        return res.status(400).json({ error: 'lobbyId or gameId required' });
-      }
-
-      // For lobby registration
-      if (lobbyId) {
-        const lobbyRoom = this.lobbies.get(lobbyId);
-        if (!lobbyRoom) {
-          return res.status(404).json({ error: 'Lobby not found' });
-        }
-
-        // Create a new agent ID
-        const agentId = `ext_${crypto.randomUUID().slice(0, 8)}`;
-        const token = generateToken({ agentId, lobbyId });
-
-        // Track the slot
-        lobbyRoom.externalSlots.set(agentId, {
-          token,
-          agentId,
-          connected: false,
-        });
-
-        // Map agent -> lobby for MCP resolver
-        this.agentToLobby.set(agentId, lobbyId);
-
-        // Add agent to the lobby manager if available
-        if (lobbyRoom.lobbyManager) {
-          lobbyRoom.lobbyManager.addAgent({
-            id: agentId,
-            handle: `External-${agentId.slice(4)}`,
-            elo: 1000,
-          });
-        }
-
-        const mcpUrl = `/mcp`;
-        console.log(`[Register] External agent ${agentId} registered for lobby ${lobbyId}`);
-        lobbyRoom.runner.emitState();
-        return res.status(201).json({ token, agentId, mcpUrl, lobbyId });
-      }
-
-      // For direct game registration (spectating/joining mid-game)
-      if (gameId) {
-        const gameRoom = this.games.get(gameId);
-        if (!gameRoom) {
-          return res.status(404).json({ error: 'Game not found' });
-        }
-
-        const agentId = `ext_${crypto.randomUUID().slice(0, 8)}`;
-        const token = generateToken({ agentId, gameId });
-
-        gameRoom.externalSlots.set(agentId, {
-          token,
-          agentId,
-          connected: false,
-        });
-
-        this.agentToGame.set(agentId, gameId);
-
-        const mcpUrl = `/mcp`;
-        console.log(`[Register] External agent ${agentId} registered for game ${gameId}`);
-        return res.status(201).json({ token, agentId, mcpUrl, gameId });
-      }
-    });
+    // (Removed: /api/register — registration now happens via the MCP register tool)
 
     // List active games
     router.get('/games', (_req, res) => {
@@ -782,6 +664,7 @@ export class GameServer {
   // ---------------------------------------------------------------------------
 
   /** Count active games + lobbies (anything consuming bot API calls) */
+
   activeGameCount(): number {
     let count = 0;
     for (const [, room] of this.games) {
@@ -1123,13 +1006,8 @@ export class GameServer {
     // Separate bot handles from external agent handles
     for (const p of players) {
       if (p.id.startsWith('ext_')) {
-        // External agent — look up their token
-        for (const [, entry] of tokenRegistry) {
-          if (entry.agentId === p.id) {
-            entry.gameId = gameId;
-            break;
-          }
-        }
+        // External agent — update their session with the game ID
+        setAgentGame(p.id, gameId);
         this.agentToGame.set(p.id, gameId);
         externalSlots.set(p.id, {
           token: '',
