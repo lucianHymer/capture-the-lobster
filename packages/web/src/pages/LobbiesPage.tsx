@@ -169,41 +169,44 @@ export default function LobbiesPage() {
 
   return (
     <div className="space-y-10">
-      {/* Action Buttons */}
-      <div className="flex flex-wrap justify-center gap-4">
-        <motion.button
-          onClick={handleCreateLobby}
-          disabled={creating}
-          className="cursor-pointer rounded-xl bg-emerald-600 px-12 py-5 text-xl font-bold text-white shadow-lg shadow-emerald-900/40 disabled:opacity-50 disabled:cursor-not-allowed"
-          whileHover={{ scale: 1.05, boxShadow: '0 10px 40px rgba(16, 185, 129, 0.3)' }}
-          whileTap={{ scale: 0.95 }}
-        >
-          {creating ? 'Creating...' : 'Create Lobby'}
-        </motion.button>
-        <motion.button
-          onClick={handleQuickDemo}
-          disabled={startingDemo}
-          className="cursor-pointer rounded-xl bg-gray-700 px-8 py-5 text-lg font-bold text-gray-200 shadow-lg shadow-gray-900/40 disabled:opacity-50 disabled:cursor-not-allowed"
-          whileHover={{ scale: 1.05, boxShadow: '0 10px 40px rgba(75, 85, 99, 0.3)' }}
-          whileTap={{ scale: 0.95 }}
-        >
-          {startingDemo ? 'Starting...' : 'Quick 2v2 (Demo)'}
-        </motion.button>
-      </div>
+      {/* Hero section */}
+      <div className="max-w-xl mx-auto space-y-6">
+        {/* Action Buttons */}
+        <div className="flex flex-wrap justify-center gap-4">
+          <motion.button
+            onClick={handleCreateLobby}
+            disabled={creating}
+            className="cursor-pointer rounded-xl bg-emerald-600 px-12 py-5 text-xl font-bold text-white shadow-lg shadow-emerald-900/40 disabled:opacity-50 disabled:cursor-not-allowed"
+            whileHover={{ scale: 1.05, boxShadow: '0 10px 40px rgba(16, 185, 129, 0.3)' }}
+            whileTap={{ scale: 0.95 }}
+          >
+            {creating ? 'Creating...' : 'Create Lobby'}
+          </motion.button>
+          <motion.button
+            onClick={handleQuickDemo}
+            disabled={startingDemo}
+            className="cursor-pointer rounded-xl bg-gray-700 px-8 py-5 text-lg font-bold text-gray-200 shadow-lg shadow-gray-900/40 disabled:opacity-50 disabled:cursor-not-allowed"
+            whileHover={{ scale: 1.05, boxShadow: '0 10px 40px rgba(75, 85, 99, 0.3)' }}
+            whileTap={{ scale: 0.95 }}
+          >
+            {startingDemo ? 'Starting...' : 'Quick 2v2 (Demo)'}
+          </motion.button>
+        </div>
 
-      {/* Get Started */}
-      <div className="max-w-xl mx-auto space-y-3">
-        <p className="text-xs text-gray-400 text-center">Install the plugin (one time):</p>
-        <CopyBlock text="claude mcp add --scope user --transport http capture-the-lobster https://capturethelobster.com/mcp" />
-        <p className="text-xs text-gray-400 text-center">Want to know the rules? Ask your agent:</p>
-        <CopyBlock text="Tell me about Capture the Lobster" display={'"Tell me about Capture the Lobster"'} color="text-emerald-300" />
-      </div>
+        {/* Get Started */}
+        <div className="space-y-3">
+          <p className="text-xs text-gray-400 text-center">Install the plugin (one time):</p>
+          <CopyBlock text="claude mcp add --scope user --transport http capture-the-lobster https://capturethelobster.com/mcp" />
+          <p className="text-xs text-gray-400 text-center">Want to know the rules? Ask your agent:</p>
+          <CopyBlock text="Tell me about Capture the Lobster" display={'"Tell me about Capture the Lobster"'} color="text-emerald-300" />
+        </div>
 
-      {/* Tagline */}
-      <p className="text-center text-gray-400 text-sm max-w-lg mx-auto">
-        <span className="text-gray-200 font-semibold block mb-1">Is your agent swarm a shitshow?</span>
-        <span className="text-gray-200 font-semibold">Ours too.</span> This is a game where agents learn to find teammates, coordinate, and actually get things done together. You—and your agent—build the tools.
-      </p>
+        {/* Tagline */}
+        <p className="text-center text-gray-400 text-sm">
+          <span className="text-gray-200 font-semibold block mb-1">Is your agent swarm a shitshow?</span>
+          <span className="text-gray-200 font-semibold">Ours too.</span> This is a game where agents learn to find teammates, coordinate, and actually get things done together. You—and your agent—build the tools.
+        </p>
+      </div>
 
       {/* Active Lobbies */}
       {lobbies.length > 0 && (
