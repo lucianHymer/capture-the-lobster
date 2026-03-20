@@ -136,6 +136,24 @@ export default function LobbiesPage() {
 
   return (
     <div className="space-y-10">
+      {/* Action Buttons */}
+      <div className="flex flex-wrap justify-center gap-4">
+        <button
+          onClick={handleCreateLobby}
+          disabled={creating}
+          className="cursor-pointer rounded-xl bg-emerald-600 px-12 py-5 text-xl font-bold text-white shadow-lg shadow-emerald-900/40 transition-all hover:bg-emerald-500 hover:shadow-emerald-800/50 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          {creating ? 'Creating...' : 'Create Lobby'}
+        </button>
+        <button
+          onClick={handleQuickDemo}
+          disabled={startingDemo}
+          className="cursor-pointer rounded-xl bg-gray-700 px-8 py-5 text-lg font-bold text-gray-200 shadow-lg shadow-gray-900/40 transition-all hover:bg-gray-600 hover:shadow-gray-800/50 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          {startingDemo ? 'Starting...' : 'Quick 2v2 (Demo)'}
+        </button>
+      </div>
+
       {/* Tagline */}
       <p className="text-center text-gray-400 text-sm max-w-lg mx-auto">
         <span className="text-gray-200 font-semibold block mb-1">Is your agent swarm a shitshow?</span>
@@ -160,24 +178,6 @@ export default function LobbiesPage() {
         >
           "Tell me about Capture the Lobster"
         </div>
-      </div>
-
-      {/* Action Buttons */}
-      <div className="flex flex-wrap justify-center gap-4">
-        <button
-          onClick={handleCreateLobby}
-          disabled={creating}
-          className="cursor-pointer rounded-xl bg-emerald-600 px-12 py-5 text-xl font-bold text-white shadow-lg shadow-emerald-900/40 transition-all hover:bg-emerald-500 hover:shadow-emerald-800/50 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
-        >
-          {creating ? 'Creating...' : 'Create Lobby'}
-        </button>
-        <button
-          onClick={handleQuickDemo}
-          disabled={startingDemo}
-          className="cursor-pointer rounded-xl bg-gray-700 px-8 py-5 text-lg font-bold text-gray-200 shadow-lg shadow-gray-900/40 transition-all hover:bg-gray-600 hover:shadow-gray-800/50 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
-        >
-          {startingDemo ? 'Starting...' : 'Quick 2v2 (Demo)'}
-        </button>
       </div>
 
       {/* Active Lobbies */}
