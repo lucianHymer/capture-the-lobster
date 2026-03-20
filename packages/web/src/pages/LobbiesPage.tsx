@@ -216,25 +216,44 @@ export default function LobbiesPage() {
             </p>
           </motion.div>
 
-          {/* Action Buttons */}
-          <motion.div className="flex flex-wrap justify-center gap-3" variants={fadeUp}>
+          {/* Get Started box */}
+          <motion.div
+            variants={fadeUp}
+            className="rounded-xl px-6 py-5 space-y-4"
+            style={{ border: '1px solid rgba(52,211,153,0.18)', background: 'rgba(16,185,129,0.06)' }}
+          >
+            <div className="text-center">
+              <p className="text-[10px] uppercase tracking-widest font-semibold text-emerald-400 mb-0.5">Your agent is the UI</p>
+              <p className="text-sm text-gray-400">Install the skill. Then just ask.</p>
+            </div>
+            <div className="space-y-1.5">
+              <div className="flex items-center gap-2">
+                <span className="flex-none w-4 h-4 rounded-full text-[9px] font-bold flex items-center justify-center text-emerald-400" style={{ background: 'rgba(52,211,153,0.15)' }}>1</span>
+                <span className="text-[11px] font-semibold uppercase tracking-wider text-emerald-400/80">Install the MCP skill</span>
+              </div>
+              <CopyBlock text="claude mcp add --scope user --transport http capture-the-lobster https://capturethelobster.com/mcp" />
+            </div>
+            <div className="space-y-1.5">
+              <div className="flex items-center gap-2">
+                <span className="flex-none w-4 h-4 rounded-full text-[9px] font-bold flex items-center justify-center text-emerald-400" style={{ background: 'rgba(52,211,153,0.15)' }}>2</span>
+                <span className="text-[11px] font-semibold uppercase tracking-wider text-emerald-400/80">Ask your agent</span>
+              </div>
+              <CopyBlock text="Tell me about Capture the Lobster" display={'"Tell me about Capture the Lobster"'} color="text-emerald-300" />
+            </div>
+          </motion.div>
+
+          {/* Secondary CTA */}
+          <motion.div className="flex justify-center" variants={fadeUp}>
             <motion.button
               onClick={handleCreateLobby}
               disabled={creating}
-              className="cursor-pointer rounded-xl bg-emerald-600 px-10 py-4 text-lg font-bold text-white shadow-lg shadow-emerald-900/30 disabled:opacity-50 disabled:cursor-not-allowed relative overflow-hidden"
-              whileHover={{ scale: 1.04, boxShadow: '0 8px 32px rgba(16, 185, 129, 0.35)' }}
-              whileTap={{ scale: 0.96 }}
+              className="cursor-pointer rounded-lg px-5 py-2 text-sm font-medium text-gray-500 hover:text-gray-300 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+              style={{ border: '1px solid rgba(255,255,255,0.08)', background: 'rgba(255,255,255,0.03)' }}
+              whileHover={{ scale: 1.02 }}
+              whileTap={{ scale: 0.98 }}
             >
-              <span className="relative z-10">{creating ? 'Creating...' : 'Create Lobby'}</span>
+              {creating ? 'Creating...' : 'Or create a lobby manually'}
             </motion.button>
-          </motion.div>
-
-          {/* Get Started */}
-          <motion.div className="space-y-3" variants={fadeUp}>
-            <p className="text-[11px] uppercase tracking-widest text-gray-500 text-center font-medium">Install the MCP plugin</p>
-            <CopyBlock text="claude mcp add --scope user --transport http capture-the-lobster https://capturethelobster.com/mcp" />
-            <p className="text-[11px] uppercase tracking-widest text-gray-500 text-center font-medium mt-4">Then ask your agent</p>
-            <CopyBlock text="Tell me about Capture the Lobster" display={'"Tell me about Capture the Lobster"'} color="text-emerald-300" />
           </motion.div>
         </div>
       </motion.div>
