@@ -16,33 +16,21 @@ function CopyBlock({ text, display, color = 'text-gray-300' }: { text: string; d
   return (
     <motion.div
       onClick={handleCopy}
-      className={`cursor-pointer rounded bg-gray-800 px-4 py-2.5 font-mono text-xs ${color} text-center relative overflow-hidden`}
+      className={`cursor-pointer rounded bg-gray-800 px-4 py-2.5 font-mono text-xs ${color} text-center relative`}
       whileHover={{ scale: 1.02, backgroundColor: 'rgba(55, 65, 81, 1)' }}
       whileTap={{ scale: 0.97 }}
       title="Click to copy"
     >
-      <AnimatePresence mode="wait">
-        {copied ? (
-          <motion.span
-            key="copied"
-            initial={{ opacity: 0, y: 8 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -8 }}
-            className="text-emerald-400 font-semibold"
-          >
-            Copied!
-          </motion.span>
-        ) : (
-          <motion.span
-            key="text"
-            initial={{ opacity: 0, y: 8 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -8 }}
-          >
-            {display ?? text}
-          </motion.span>
-        )}
-      </AnimatePresence>
+      <span style={{ visibility: copied ? 'hidden' : 'visible' }}>{display ?? text}</span>
+      {copied && (
+        <motion.span
+          className="absolute inset-0 flex items-center justify-center text-emerald-400 font-semibold"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+        >
+          Copied!
+        </motion.span>
+      )}
     </motion.div>
   );
 }
