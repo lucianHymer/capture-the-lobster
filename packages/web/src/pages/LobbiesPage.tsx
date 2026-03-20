@@ -170,7 +170,7 @@ export default function LobbiesPage() {
   return (
     <div className="space-y-10">
       {/* Hero section */}
-      <div className="max-w-xl mx-auto space-y-6">
+      <div className="mx-auto space-y-6" style={{ maxWidth: '464px' }}>
         {/* Action Buttons */}
         <div className="flex flex-wrap justify-center gap-4">
           <motion.button
