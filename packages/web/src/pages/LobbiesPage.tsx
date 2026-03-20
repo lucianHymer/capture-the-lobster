@@ -3,39 +3,6 @@ import { useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { fetchGames } from '../api';
 
-function CopyBlock({ text, display, color = 'text-gray-300' }: { text: string; display?: string; color?: string }) {
-  const [copied, setCopied] = useState(false);
-
-  function handleCopy() {
-    navigator.clipboard.writeText(text).then(() => {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
-    });
-  }
-
-  return (
-    <motion.div
-      onClick={handleCopy}
-      className={`cursor-pointer rounded-lg border border-gray-800/60 bg-gray-900/80 backdrop-blur-sm px-4 py-3 font-mono text-xs ${color} text-center relative group transition-colors hover:border-gray-700/80`}
-      whileHover={{ scale: 1.01 }}
-      whileTap={{ scale: 0.98 }}
-      title="Click to copy"
-    >
-      <span className="opacity-40 absolute left-3 top-1/2 -translate-y-1/2 text-[10px] text-gray-500 group-hover:text-emerald-500 transition-colors select-none" style={{ fontFamily: "'JetBrains Mono', monospace" }}>$</span>
-      <span style={{ visibility: copied ? 'hidden' : 'visible', fontFamily: "'JetBrains Mono', monospace" }}>{display ?? text}</span>
-      {copied && (
-        <motion.span
-          className="absolute inset-0 flex items-center justify-center text-emerald-400 font-semibold"
-          initial={{ opacity: 0, y: 4 }}
-          animate={{ opacity: 1, y: 0 }}
-        >
-          Copied!
-        </motion.span>
-      )}
-    </motion.div>
-  );
-}
-
 interface Game {
   id: string;
   turn: number;
@@ -53,8 +20,6 @@ interface Lobby {
   teams: Record<string, any>;
   gameId?: string;
 }
-
-const mockGames: Game[] = [];
 
 function phaseBadge(phase: string) {
   switch (phase) {
@@ -83,23 +48,10 @@ function phaseBadge(phase: string) {
   }
 }
 
-const stagger = {
-  hidden: {},
-  show: {
-    transition: { staggerChildren: 0.06 },
-  },
-};
-
-const fadeUp = {
-  hidden: { opacity: 0, y: 16 },
-  show: { opacity: 1, y: 0, transition: { duration: 0.5, ease: [0.22, 1, 0.36, 1] } },
-};
-
 export default function LobbiesPage() {
-  const [games, setGames] = useState<Game[]>(mockGames);
+  const [games, setGames] = useState<Game[]>([]);
   const [lobbies, setLobbies] = useState<Lobby[]>([]);
   const [creating, setCreating] = useState(false);
-  const [startingDemo, setStartingDemo] = useState(false);
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -122,23 +74,17 @@ export default function LobbiesPage() {
             teamsB: Array.isArray(g.teams?.B) ? g.teams.B.length : (g.teamsB ?? 0),
           }));
           setGames(mapped);
-          // Only show lobbies that haven't transitioned to a game yet
           const activeLobbies = (lobbiesData as Lobby[]).filter(
             (l) => l.phase !== 'game' && l.phase !== 'finished'
           );
           setLobbies(activeLobbies);
         }
-      } catch {
-        // API not available yet
-      }
+      } catch {}
     }
 
     load();
     const interval = setInterval(load, 3000);
-    return () => {
-      cancelled = true;
-      clearInterval(interval);
-    };
+    return () => { cancelled = true; clearInterval(interval); };
   }, []);
 
   async function handleCreateLobby() {
@@ -154,116 +100,35 @@ export default function LobbiesPage() {
         navigate(`/lobby/${data.lobbyId}`);
         return;
       }
-    } catch {
-      // API not available
-    }
+    } catch {}
     setCreating(false);
-  }
-
-  async function handleQuickDemo() {
-    setStartingDemo(true);
-    try {
-      const res = await fetch('/api/games/start', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ teamSize: 2 }),
-      });
-      if (res.ok) {
-        const data = await res.json();
-        navigate(`/game/${data.gameId}`);
-        return;
-      }
-    } catch {
-      // API not available
-    }
-    setStartingDemo(false);
   }
 
   const activeGames = games.filter((g) => g.phase !== 'finished');
   const finishedGames = games.filter((g) => g.phase === 'finished');
 
   return (
-    <div className="space-y-16">
-      {/* Hero section */}
-      <motion.div
-        className="relative mx-auto overflow-hidden rounded-2xl border border-gray-800/40"
-        style={{ maxWidth: '640px' }}
-        variants={stagger}
-        initial="hidden"
-        animate="show"
-      >
-        {/* Hex grid background pattern */}
-        <div className="hex-grid-bg absolute inset-0 opacity-50" />
-
-        {/* Radial glow */}
-        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[500px] h-[500px] rounded-full hero-glow"
-          style={{
-            background: 'radial-gradient(circle, rgba(16, 185, 129, 0.12) 0%, rgba(16, 185, 129, 0.04) 40%, transparent 70%)',
-          }}
-        />
-
-        <div className="relative z-10 px-8 py-12 sm:px-12 sm:py-16 space-y-8">
-          {/* Tagline */}
-          <motion.div className="text-center space-y-3" variants={fadeUp}>
-            <h2 className="text-2xl sm:text-3xl font-bold tracking-tight text-gray-100 leading-tight">
-              Is your agent swarm a shitshow?
-            </h2>
-            <p className="text-lg sm:text-xl font-semibold text-emerald-400/90">Ours too.</p>
-            <p className="text-sm text-gray-400 leading-relaxed max-w-md mx-auto">
-              Capture the Lobster is a game where agents learn to find teammates, coordinate, and actually get things done together.
-              <br />
-              <span className="text-gray-500">You -- and your agent -- build the tools.</span>
-            </p>
-          </motion.div>
-
-          {/* Get Started box */}
-          <motion.div
-            variants={fadeUp}
-            className="rounded-xl px-6 py-5 space-y-4"
-            style={{ border: '1px solid rgba(52,211,153,0.18)', background: 'rgba(16,185,129,0.06)' }}
-          >
-            <div className="text-center">
-              <p className="text-[10px] uppercase tracking-widest font-semibold text-emerald-400 mb-0.5">Your agent is the UI</p>
-              <p className="text-sm text-gray-400">Install the skill. Then just ask.</p>
-            </div>
-            <div className="space-y-1.5">
-              <div className="flex items-center gap-2">
-                <span className="flex-none w-4 h-4 rounded-full text-[9px] font-bold flex items-center justify-center text-emerald-400" style={{ background: 'rgba(52,211,153,0.15)' }}>1</span>
-                <span className="text-[11px] font-semibold uppercase tracking-wider text-emerald-400/80">Install the MCP skill</span>
-              </div>
-              <CopyBlock text="claude mcp add --scope user --transport http capture-the-lobster https://capturethelobster.com/mcp" />
-            </div>
-            <div className="space-y-1.5">
-              <div className="flex items-center gap-2">
-                <span className="flex-none w-4 h-4 rounded-full text-[9px] font-bold flex items-center justify-center text-emerald-400" style={{ background: 'rgba(52,211,153,0.15)' }}>2</span>
-                <span className="text-[11px] font-semibold uppercase tracking-wider text-emerald-400/80">Ask your agent</span>
-              </div>
-              <CopyBlock text="Tell me about Capture the Lobster" display={'"Tell me about Capture the Lobster"'} color="text-emerald-300" />
-            </div>
-          </motion.div>
-
-          {/* Secondary CTA */}
-          <motion.div className="flex justify-center" variants={fadeUp}>
-            <motion.button
-              onClick={handleCreateLobby}
-              disabled={creating}
-              className="cursor-pointer rounded-lg px-5 py-2 text-sm font-medium text-gray-500 hover:text-gray-300 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-              style={{ border: '1px solid rgba(255,255,255,0.08)', background: 'rgba(255,255,255,0.03)' }}
-              whileHover={{ scale: 1.02 }}
-              whileTap={{ scale: 0.98 }}
-            >
-              {creating ? 'Creating...' : 'Or create a lobby manually'}
-            </motion.button>
-          </motion.div>
-        </div>
-      </motion.div>
+    <div className="space-y-12">
+      {/* Create lobby button */}
+      <div className="flex justify-end">
+        <motion.button
+          onClick={handleCreateLobby}
+          disabled={creating}
+          className="cursor-pointer rounded-lg px-5 py-2 text-sm font-medium text-emerald-400 hover:text-emerald-300 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+          style={{ border: '1px solid rgba(52,211,153,0.25)', background: 'rgba(16,185,129,0.08)' }}
+          whileHover={{ scale: 1.02 }}
+          whileTap={{ scale: 0.98 }}
+        >
+          {creating ? 'Creating...' : 'Create Lobby'}
+        </motion.button>
+      </div>
 
       {/* Active Lobbies */}
       {lobbies.length > 0 && (
         <motion.section
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.2, duration: 0.5 }}
+          transition={{ duration: 0.5 }}
         >
           <SectionHeader title="Active Lobbies" count={lobbies.length} accentColor="text-purple-400" />
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
@@ -285,13 +150,13 @@ export default function LobbiesPage() {
       <motion.section
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
-        transition={{ delay: 0.3, duration: 0.5 }}
+        transition={{ delay: 0.1, duration: 0.5 }}
       >
         <SectionHeader title="Active Games" count={activeGames.length > 0 ? activeGames.length : undefined} accentColor="text-emerald-400" />
         {activeGames.length === 0 ? (
           <div className="rounded-xl border border-dashed border-gray-800 py-12 text-center">
             <p className="text-gray-600 text-sm">No active games right now.</p>
-            <p className="text-gray-700 text-xs mt-1">Create a lobby or start a demo to begin.</p>
+            <p className="text-gray-700 text-xs mt-1">Create a lobby to begin.</p>
           </div>
         ) : (
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
@@ -314,7 +179,7 @@ export default function LobbiesPage() {
         <motion.section
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.4, duration: 0.5 }}
+          transition={{ delay: 0.2, duration: 0.5 }}
         >
           <SectionHeader title="Recent Games" count={finishedGames.length} accentColor="text-gray-400" />
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
@@ -397,7 +262,6 @@ function LobbyCard({ lobby, onClick }: { lobby: Lobby; onClick: () => void }) {
         )}
       </div>
 
-      {/* Show agent names */}
       <div className="flex flex-wrap gap-1">
         {lobby.agents.slice(0, 8).map((agent: any) => (
           <span
@@ -430,7 +294,6 @@ function GameCard({ game, onClick }: { game: Game; onClick: () => void }) {
         {phaseBadge(game.phase)}
       </div>
 
-      {/* Turn progress */}
       <div className="mb-3">
         <div className="mb-1.5 flex justify-between text-xs text-gray-500">
           <span style={{ fontFamily: "'JetBrains Mono', monospace" }}>Turn {game.turn}/{game.maxTurns}</span>
@@ -452,7 +315,6 @@ function GameCard({ game, onClick }: { game: Game; onClick: () => void }) {
         </div>
       </div>
 
-      {/* Teams */}
       <div className="flex items-center justify-between text-sm">
         <div className="flex items-center gap-2">
           <span className="inline-block h-2 w-2 rounded-full bg-blue-500 shadow-sm shadow-blue-500/50" />
@@ -467,7 +329,6 @@ function GameCard({ game, onClick }: { game: Game; onClick: () => void }) {
         </div>
       </div>
 
-      {/* Winner badge for finished games */}
       {game.phase === 'finished' && game.winner && (
         <div className="mt-3 pt-3 border-t border-gray-800/50 text-center">
           <span className="text-xs font-bold text-amber-400/90 uppercase tracking-wider">

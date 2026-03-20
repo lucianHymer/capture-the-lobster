@@ -21,6 +21,9 @@ export default function Layout() {
           </NavLink>
 
           <nav className="flex items-center gap-6 text-sm">
+            <NavLink to="/" end className={({ isActive }) => `hidden sm:inline ${navLinkClass({ isActive })}`}>
+              Home
+            </NavLink>
             <NavLink to="/lobbies" className={navLinkClass}>
               Lobbies
             </NavLink>

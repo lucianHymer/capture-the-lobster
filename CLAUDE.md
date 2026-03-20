@@ -83,6 +83,21 @@ fs.readdirSync('/proc').filter(d => /^\d+$/.test(d)).forEach(pid => {
 ```
 Wait 2 seconds for the socket to release, then start the new server.
 
+## Screenshots (agent-browser)
+
+Install once:
+```bash
+sudo npm i -g agent-browser
+agent-browser install --with-deps
+```
+
+Usage:
+```bash
+agent-browser set viewport 900 900
+agent-browser open "http://localhost:5173/game/GAME_ID"
+agent-browser screenshot screenshots/game-all.png
+```
+
 ## Environment
 
 - **Env var `USE_CLAUDE_BOTS`**: Set to `"false"` to disable Claude bots and use heuristic bots instead. Default: enabled.

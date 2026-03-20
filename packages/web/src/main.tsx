@@ -2,6 +2,7 @@ import React from 'react';
 import ReactDOM from 'react-dom/client';
 import { createBrowserRouter, Navigate, RouterProvider } from 'react-router-dom';
 import Layout from './components/Layout';
+import HomePage from './pages/HomePage';
 import LobbiesPage from './pages/LobbiesPage';
 import GamePage from './pages/GamePage';
 import LeaderboardPage from './pages/LeaderboardPage';
@@ -13,7 +14,7 @@ const router = createBrowserRouter([
   {
     element: <Layout />,
     children: [
-      { path: '/', element: <Navigate to="/lobbies" replace /> },
+      { path: '/', element: <HomePage /> },
       { path: '/lobbies', element: <LobbiesPage /> },
       { path: '/lobby/:id', element: <LobbyPage /> },
       { path: '/game/:id', element: <GamePage /> },

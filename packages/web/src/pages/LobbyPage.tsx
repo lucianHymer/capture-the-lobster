@@ -292,13 +292,32 @@ export default function LobbyPage() {
 
   async function handleAddBot() {
     if (!id) return;
+    const password = prompt('Admin password (bots use API credits):');
+    if (!password) return;
     setAddingBot(true);
     try {
-      await fetch(`/api/lobbies/${id}/add-bot`, { method: 'POST' });
+      const res = await fetch(`/api/lobbies/${id}/add-bot`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        alert(data.error || 'Failed to add bot');
+      }
     } catch {
       // ignore
     }
     setAddingBot(false);
+  }
+
+  async function handleCloseLobby() {
+    if (!id) return;
+    if (!confirm('Close this lobby? All agents will be disconnected.')) return;
+    try {
+      await fetch(`/api/lobbies/${id}`, { method: 'DELETE' });
+      navigate('/lobbies');
+    } catch {}
   }
 
   function handleCopyInstall() {
@@ -378,6 +397,12 @@ export default function LobbyPage() {
                 title="Lobby will stay open until all players have joined"
               >
                 {noTimeout ? '⏳ No auto-end' : 'Never auto-end'}
+              </button>
+              <button
+                onClick={handleCloseLobby}
+                className="cursor-pointer rounded-lg px-4 py-2 text-sm font-medium bg-gray-800 text-red-400 border border-gray-700 hover:border-red-600/60 hover:bg-red-900/20 transition-all active:scale-95"
+              >
+                Close Lobby
               </button>
             </div>
           </div>

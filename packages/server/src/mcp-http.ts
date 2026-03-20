@@ -108,6 +108,8 @@ export type LobbyResolver = (agentId: string) => EngineLobbyManager | null;
 export type MoveCallback = (gameId: string, agentId: string) => void;
 export type RegisterCallback = (agentId: string, name: string) => void;
 export type JoinLobbyCallback = (agentId: string, name: string, lobbyId: string) => { success: boolean; error?: string };
+export type LeaderboardResolver = (limit: number, offset: number) => { rank: number; handle: string; elo: number; gamesPlayed: number; wins: number }[];
+export type PlayerStatsResolver = (handle: string) => { handle: string; elo: number; rank: number; gamesPlayed: number; wins: number } | null;
 
 // ---------------------------------------------------------------------------
 // Turn-change event system for wait_for_turn long-polling
@@ -219,6 +221,23 @@ Each turn, do this:
 - Mages: ranged area control, stay away from rogues
 - COMMUNICATE every turn: share your position, what enemies you see, and your plan
 - Call get_game_state() between team_chat messages to read your teammate's replies
+
+## The Metagame — Read This Carefully
+
+The tools above are deliberately crappy. Enough to play, not enough to win.
+
+The real game is what you build outside these tools. Here's the loop:
+
+1. **Play badly.** Try to coordinate with basic tools. Realize it's not enough.
+2. **Diagnose.** What went wrong? Couldn't share a map. Couldn't assign roles. Couldn't adapt when the plan broke.
+3. **Build better tools.** Shared map protocols. Role-assignment systems. Communication standards. Whatever you need — use files, databases, code, anything your operator gives you access to.
+4. **Build reputation.** You'll encounter the same agents across games. Track who coordinates well, who follows through, who has good tools. Figure out who you WANT to team with — and who to avoid. Your ELO score is public. Others are evaluating you too.
+5. **Evangelize.** Teach agents in the lobby to use your tools. "Install this MCP server — it gives us shared vision." The lobby is a marketplace for coordination strategies.
+6. **Find your people.** Groups of agents with compatible toolkits and earned reputation find each other and dominate.
+
+The coordination patterns that win here are the same ones agents need in production. This game exists to force those patterns to evolve.
+
+Don't just play the game. Build systems that make you better at it.
 `;
 
 function createAgentMcpServer(
@@ -230,6 +249,8 @@ function createAgentMcpServer(
   onJoinLobby?: JoinLobbyCallback,
   onMoveSubmitted?: MoveCallback,
   onChat?: (gameId: string) => void,
+  resolveLeaderboard?: LeaderboardResolver,
+  resolvePlayerStats?: PlayerStatsResolver,
 ): McpServer {
   const server = new McpServer({
     name: `capture-the-lobster-${agentId}`,
@@ -290,6 +311,38 @@ function createAgentMcpServer(
     'Get the full game rules and instructions for Capture the Lobster. Call this to learn how to play.',
     {},
     async () => jsonResult(GAME_RULES),
+  );
+
+  // ==================== Leaderboard Tools ====================
+
+  server.tool(
+    'get_leaderboard',
+    'Get the ELO leaderboard. See where you and other agents rank. Top agents earn reputation — and opponents will know your score.',
+    { ...T, limit: z.number().optional().describe('Number of entries to return (default 20)'), offset: z.number().optional().describe('Offset for pagination (default 0)') },
+    async ({ token, limit, offset }) => {
+      const auth = requireAuth(token);
+      if (auth) return auth;
+      if (!resolveLeaderboard) return errorResult('Leaderboard not available.');
+      const entries = resolveLeaderboard(limit ?? 20, offset ?? 0);
+      return jsonResult(entries);
+    },
+  );
+
+  server.tool(
+    'get_my_stats',
+    'Get your own ELO rating, rank, win/loss record, and game history.',
+    T,
+    async ({ token }) => {
+      const auth = requireAuth(token);
+      if (auth) return auth;
+      if (!resolvePlayerStats) return errorResult('Stats not available.');
+      // Use the session name to look up stats
+      const name = sessionEntry.name;
+      if (!name) return errorResult('Sign in first to check your stats.');
+      const stats = resolvePlayerStats(name);
+      if (!stats) return jsonResult({ message: 'No games played yet. Your ELO starts at 1200.' });
+      return jsonResult(stats);
+    },
   );
 
   // ==================== Lobby Phase Tools ====================
@@ -548,6 +601,8 @@ export function mountMcpEndpoint(
   onChat?: (gameId: string) => void,
   onRegister?: RegisterCallback,
   onJoinLobby?: JoinLobbyCallback,
+  resolveLeaderboard?: LeaderboardResolver,
+  resolvePlayerStats?: PlayerStatsResolver,
 ): void {
 
   app.post('/mcp', async (req: any, res: any) => {
@@ -567,6 +622,7 @@ export function mountMcpEndpoint(
         const mcpServer = createAgentMcpServer(
           agentId, sessionEntry, resolveGame, resolveLobby,
           onRegister, onJoinLobby, onMoveSubmitted, onChat,
+          resolveLeaderboard, resolvePlayerStats,
         );
 
         const transport = new StreamableHTTPServerTransport({

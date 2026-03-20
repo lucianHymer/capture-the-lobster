@@ -146,6 +146,10 @@ export class LobbyRunner {
     this.noTimeout = true;
   }
 
+  stop(): void {
+    this.abortController.abort();
+  }
+
   getState(): LobbyRunnerState {
     const lobbyState = this.lobby.getLobbyState('__spectator__');
     const agents = lobbyState.agents.map((a) => ({

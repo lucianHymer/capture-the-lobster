@@ -387,6 +387,32 @@ export class GameServer {
         lobbyRoom.runner.emitState();
         return { success: true };
       },
+      // Leaderboard resolver
+      (limit: number, offset: number) => {
+        const players = this.elo.getLeaderboard(limit, offset);
+        return players.map((p, i) => ({
+          rank: offset + i + 1,
+          handle: p.handle,
+          elo: p.elo,
+          gamesPlayed: p.gamesPlayed,
+          wins: p.wins,
+        }));
+      },
+      // Player stats resolver
+      (handle: string) => {
+        const player = this.elo.getPlayerByHandle(handle);
+        if (!player) return null;
+        // Get rank by counting players with higher ELO
+        const leaderboard = this.elo.getLeaderboard(1000, 0);
+        const rank = leaderboard.findIndex(p => p.handle === handle) + 1;
+        return {
+          handle: player.handle,
+          elo: player.elo,
+          rank: rank || 0,
+          gamesPlayed: player.gamesPlayed,
+          wins: player.wins,
+        };
+      },
     );
   }
 
@@ -470,8 +496,12 @@ export class GameServer {
       res.status(201).json({ lobbyId, teamSize });
     });
 
-    // Add a bot to a lobby
+    // Add a bot to a lobby (requires admin password since bots use API credits)
     router.post('/lobbies/:id/add-bot', (req, res) => {
+      const adminPassword = process.env.ADMIN_PASSWORD;
+      if (adminPassword && req.body?.password !== adminPassword) {
+        return res.status(401).json({ error: 'Admin password required to add bots (they use API credits).' });
+      }
       const lobbyRoom = this.lobbies.get(req.params.id);
       if (!lobbyRoom) {
         return res.status(404).json({ error: 'Lobby not found' });
@@ -490,6 +520,22 @@ export class GameServer {
         return res.status(404).json({ error: 'Lobby not found' });
       }
       lobbyRoom.runner.disableTimeout();
+      res.json({ ok: true });
+    });
+
+    // Close/disband a lobby
+    router.delete('/lobbies/:id', (req, res) => {
+      const lobbyRoom = this.lobbies.get(req.params.id);
+      if (!lobbyRoom) {
+        return res.status(404).json({ error: 'Lobby not found' });
+      }
+      lobbyRoom.runner.stop();
+      this.lobbies.delete(req.params.id);
+      // Clean up agent->lobby mappings
+      for (const [agentId, lobbyId] of this.agentToLobby.entries()) {
+        if (lobbyId === req.params.id) this.agentToLobby.delete(agentId);
+      }
+      console.log(`[Lobby] ${req.params.id} disbanded`);
       res.json({ ok: true });
     });
 
@@ -531,8 +577,12 @@ export class GameServer {
       res.json(state);
     });
 
-    // Create a bot game
+    // Create a bot game (requires admin password since bots use API credits)
     router.post('/games/start', (req, res) => {
+      const adminPassword = process.env.ADMIN_PASSWORD;
+      if (adminPassword && req.body?.password !== adminPassword) {
+        return res.status(401).json({ error: 'Admin password required to start bot games (they use API credits).' });
+      }
       if (this.activeGameCount() >= this.maxConcurrentGames) {
         return res.status(429).json({ error: 'Server busy — a lobby or game is already running. Wait for it to finish.' });
       }
