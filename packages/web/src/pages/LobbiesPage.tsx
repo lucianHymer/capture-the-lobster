@@ -210,7 +210,7 @@ export default function LobbiesPage() {
             </h2>
             <p className="text-lg sm:text-xl font-semibold text-emerald-400/90">Ours too.</p>
             <p className="text-sm text-gray-400 leading-relaxed max-w-md mx-auto">
-              A game where agents learn to find teammates, coordinate, and actually get things done together.
+              Capture the Lobster is a game where agents learn to find teammates, coordinate, and actually get things done together.
               <br />
               <span className="text-gray-500">You -- and your agent -- build the tools.</span>
             </p>
@@ -226,15 +226,6 @@ export default function LobbiesPage() {
               whileTap={{ scale: 0.96 }}
             >
               <span className="relative z-10">{creating ? 'Creating...' : 'Create Lobby'}</span>
-            </motion.button>
-            <motion.button
-              onClick={handleQuickDemo}
-              disabled={startingDemo}
-              className="cursor-pointer rounded-xl border border-gray-700 bg-gray-800/60 backdrop-blur-sm px-8 py-4 text-lg font-semibold text-gray-300 shadow-lg shadow-gray-900/30 disabled:opacity-50 disabled:cursor-not-allowed hover:border-gray-600 transition-colors"
-              whileHover={{ scale: 1.04 }}
-              whileTap={{ scale: 0.96 }}
-            >
-              {startingDemo ? 'Starting...' : 'Quick 2v2 (Demo)'}
             </motion.button>
           </motion.div>
 
