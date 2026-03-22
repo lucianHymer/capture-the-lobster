@@ -347,7 +347,7 @@ export default function GamePage() {
     selectedTeam === 'all' ? 'All Chat' : `Team ${selectedTeam} Chat`;
 
   return (
-    <div className="flex flex-col md:h-[calc(100vh-5rem)] -mx-6 -my-8 px-4 py-3 gap-2">
+    <div className="flex flex-col md:h-[calc(100vh-5rem)] -mx-4 sm:-mx-6 -mb-4 sm:-mb-8 px-2 sm:px-4 pt-0 pb-3 gap-2">
       {/* Top bar */}
       <div className="flex flex-wrap items-center justify-between bg-gray-900 rounded-lg px-3 py-2 shrink-0 gap-2">
         <div className="flex items-center gap-2 sm:gap-4">
