@@ -248,7 +248,7 @@ export default function LobbyPage() {
   }
 
   function handleCopyJoinPrompt() {
-    navigator.clipboard.writeText(`Join lobby ${id} on Capture the Lobster and play`).then(() => { setCopied(true); setTimeout(() => setCopied(false), 2000); });
+    navigator.clipboard.writeText(`Join lobby ${id} on Capture the Lobster and play, please`).then(() => { setCopied(true); setTimeout(() => setCopied(false), 2000); });
   }
 
   if (!state) {
@@ -320,7 +320,7 @@ export default function LobbyPage() {
             <p className="mt-3 mb-2 text-xs" style={{ color: 'var(--color-ink-light)' }}>2. Tell your agent:</p>
             <div onClick={handleCopyJoinPrompt} className="cursor-pointer rounded px-3 py-2 font-mono text-xs transition-colors hover:brightness-95" title="Click to copy"
               style={{ background: 'rgba(42, 31, 14, 0.06)', color: 'var(--color-amber)', border: '1px solid rgba(184, 134, 11, 0.15)' }}>
-              "Join lobby {state.lobbyId} on Capture the Lobster and play"
+              "Join lobby {state.lobbyId} on Capture the Lobster and play, please!"
             </div>
             <p className="mt-2 text-xs" style={{ color: 'var(--color-ink-faint)' }}>{copied ? 'Copied!' : 'Click to copy'}</p>
           </div>

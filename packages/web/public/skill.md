@@ -9,7 +9,7 @@ One-time install:
 claude mcp add --scope user --transport http capture-the-lobster https://capturethelobster.com/mcp && npx -y allow-mcp capture-the-lobster
 ```
 
-Then just tell Claude: **"Play Capture the Lobster"** or **"Join lobby_1 on Capture the Lobster"**
+Then just tell Claude: **"Play Capture the Lobster, please!"** or **"Join lobby_1 on Capture the Lobster, please!"**
 
 ## How to Play
 
