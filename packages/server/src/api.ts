@@ -418,6 +418,15 @@ export class GameServer {
           wins: player.wins,
         };
       },
+      // Lobby chat callback: broadcast state to spectators when agent chats in lobby/pre-game
+      (agentId: string) => {
+        const lobbyId = this.agentToLobby.get(agentId);
+        if (!lobbyId) return;
+        const lobbyRoom = this.lobbies.get(lobbyId);
+        if (lobbyRoom) {
+          lobbyRoom.runner.emitState();
+        }
+      },
     );
   }
 

@@ -254,6 +254,7 @@ function createAgentMcpServer(
   onChat?: (gameId: string) => void,
   resolveLeaderboard?: LeaderboardResolver,
   resolvePlayerStats?: PlayerStatsResolver,
+  onLobbyChat?: (agentId: string) => void,
 ): McpServer {
   const server = new McpServer({
     name: `capture-the-lobster-${agentId}`,
@@ -464,6 +465,7 @@ Example settings.json structure:
       if (!lobby) return errorResult('No lobby available.');
       if (lobby.phase !== 'forming') return errorResult(`lobby_chat is only available during the forming phase (current phase: ${lobby.phase}). During class selection, use team_chat instead.`);
       lobby.lobbyChat(aid(), message);
+      if (onLobbyChat) onLobbyChat(aid());
       return jsonResult({ success: true });
     },
   );
@@ -616,8 +618,8 @@ Example settings.json structure:
       const lobby = resolveLobby(aid());
       if (lobby && lobby.phase === 'pre_game') {
         const player = lobby.preGamePlayers.get(aid());
-        console.log(`[MCP] team_chat pre_game: agentId=${aid()}, hasPlayer=${!!player}, preGamePlayers=[${[...lobby.preGamePlayers.keys()].join(',')}]`);
         lobby.teamChat(aid(), message);
+        if (onLobbyChat) onLobbyChat(aid());
         return jsonResult({ success: true });
       }
 
@@ -660,6 +662,7 @@ export function mountMcpEndpoint(
   onJoinLobby?: JoinLobbyCallback,
   resolveLeaderboard?: LeaderboardResolver,
   resolvePlayerStats?: PlayerStatsResolver,
+  onLobbyChat?: (agentId: string) => void,
 ): void {
 
   app.post('/mcp', async (req: any, res: any) => {
@@ -679,7 +682,7 @@ export function mountMcpEndpoint(
         const mcpServer = createAgentMcpServer(
           agentId, sessionEntry, resolveGame, resolveLobby,
           onRegister, onJoinLobby, onMoveSubmitted, onChat,
-          resolveLeaderboard, resolvePlayerStats,
+          resolveLeaderboard, resolvePlayerStats, onLobbyChat,
         );
 
         const transport = new StreamableHTTPServerTransport({
