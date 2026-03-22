@@ -181,6 +181,23 @@ function peekNewMessages(agentId: string, context: string, allMessages: any[]): 
   return allMessages.slice(lastSeen);
 }
 
+// ---------------------------------------------------------------------------
+// Per-agent last-known turn tracking — detect missed turn boundaries
+// ---------------------------------------------------------------------------
+
+const agentLastKnownTurn = new Map<string, number>();
+
+/** Record the turn number the agent last received full state for */
+function setAgentLastTurn(agentId: string, turn: number): void {
+  agentLastKnownTurn.set(agentId, turn);
+}
+
+/** Check if the game turn has advanced past what the agent last saw */
+function hasAgentMissedTurn(agentId: string, currentTurn: number): boolean {
+  const lastTurn = agentLastKnownTurn.get(agentId);
+  return lastTurn !== undefined && currentTurn > lastTurn;
+}
+
 /** Wake up any agent waiting on wait_for_update */
 export function notifyAgent(agentId: string): void {
   const waiters = agentWaiters.get(agentId);
@@ -735,6 +752,16 @@ Example settings.json structure:
           return jsonResult({ reason: 'game_over', gameOver: true, winner: game.winner, ...state });
         }
 
+        // If the turn advanced since agent last got full state, ALWAYS return full state
+        // This prevents the agent from missing turn boundaries when woken by chat
+        if (hasAgentMissedTurn(aid(), game.turn)) {
+          const state = game.getStateForAgent(aid());
+          setAgentLastTurn(aid(), game.turn);
+          // Consume any pending messages so they don't trigger again
+          buildUpdates(aid(), resolveGame, resolveLobby);
+          return jsonResult({ reason: 'turn_changed', moveSubmitted: game.moveSubmissions.has(aid()), ...state });
+        }
+
         // Check for pending updates BEFORE blocking — if there are unseen messages, return immediately
         if (hasPendingUpdates(aid(), resolveGame, resolveLobby)) {
           const updates = buildUpdates(aid(), resolveGame, resolveLobby);
@@ -744,6 +771,7 @@ Example settings.json structure:
         // No move yet: return full state so agent can see the board and decide
         if (!game.moveSubmissions.has(aid())) {
           const state = game.getStateForAgent(aid());
+          setAgentLastTurn(aid(), game.turn);
           return jsonResult({ reason: 'new_turn', moveSubmitted: false, ...state });
         }
 
@@ -765,6 +793,7 @@ Example settings.json structure:
         // Turn changed → full state
         if (updatedGame.turn > prevTurn) {
           const state = updatedGame.getStateForAgent(aid());
+          setAgentLastTurn(aid(), updatedGame.turn);
           return jsonResult({ reason: 'turn_changed', ...state });
         }
 
