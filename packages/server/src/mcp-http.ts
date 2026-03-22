@@ -153,6 +153,33 @@ function waitForNextTurn(gameId: string, maxWaitMs: number = 60000): Promise<voi
 
 const agentWaiters = new Map<string, Set<() => void>>();
 
+// ---------------------------------------------------------------------------
+// Per-agent message tracking — only return messages the agent hasn't seen
+// ---------------------------------------------------------------------------
+
+/** Tracks how many messages each agent has been shown, keyed by agentId + context */
+const agentMessageCursor = new Map<string, number>();
+
+function getMessageCursorKey(agentId: string, context: string): string {
+  return `${agentId}:${context}`;
+}
+
+/** Get new messages since this agent last received a response, and advance cursor */
+function getNewMessages(agentId: string, context: string, allMessages: any[]): any[] {
+  const key = getMessageCursorKey(agentId, context);
+  const lastSeen = agentMessageCursor.get(key) ?? 0;
+  const newMsgs = allMessages.slice(lastSeen);
+  agentMessageCursor.set(key, allMessages.length);
+  return newMsgs;
+}
+
+/** Peek at new messages without advancing cursor */
+function peekNewMessages(agentId: string, context: string, allMessages: any[]): any[] {
+  const key = getMessageCursorKey(agentId, context);
+  const lastSeen = agentMessageCursor.get(key) ?? 0;
+  return allMessages.slice(lastSeen);
+}
+
 /** Wake up any agent waiting on wait_for_update */
 export function notifyAgent(agentId: string): void {
   const waiters = agentWaiters.get(agentId);
@@ -299,9 +326,9 @@ function buildUpdates(
     updates.phase = game.phase === 'finished' ? 'finished' : 'game';
     updates.turn = game.turn;
     updates.moveSubmitted = game.moveSubmissions.has(agentId);
-    // Include recent team messages (lightweight — no tiles)
-    const messages = game.getTeamMessages(agentId);
-    updates.newMessages = messages.slice(-10);
+    // Only return messages the agent hasn't seen yet
+    const allMessages = game.getTeamMessages(agentId);
+    updates.newMessages = getNewMessages(agentId, `game:${game.gameId}`, allMessages);
     if (game.phase === 'finished') {
       updates.gameOver = true;
       updates.winner = game.winner;
@@ -314,13 +341,13 @@ function buildUpdates(
     updates.phase = lobby.phase;
     if (lobby.phase === 'forming') {
       const state = lobby.getLobbyState(agentId);
-      updates.newMessages = state.chat.slice(-10);
+      updates.newMessages = getNewMessages(agentId, `lobby:${lobby.lobbyId}`, state.chat);
       updates.agentCount = state.agents.length;
       updates.teams = state.teams;
     } else if (lobby.phase === 'pre_game') {
       const teamState = lobby.getTeamState(agentId);
       if (teamState) {
-        updates.newMessages = teamState.chat.slice(-10);
+        updates.newMessages = getNewMessages(agentId, `pregame:${lobby.lobbyId}`, teamState.chat);
         updates.members = teamState.members;
         updates.timeRemainingSeconds = teamState.timeRemainingSeconds;
       }
@@ -330,6 +357,34 @@ function buildUpdates(
 
   updates.phase = 'none';
   return updates;
+}
+
+/** Check if there are pending updates (new messages) the agent hasn't seen */
+function hasPendingUpdates(
+  agentId: string,
+  resolveGame: GameResolver,
+  resolveLobby: LobbyResolver,
+): boolean {
+  const game = resolveGame(agentId);
+  if (game) {
+    const allMessages = game.getTeamMessages(agentId);
+    return peekNewMessages(agentId, `game:${game.gameId}`, allMessages).length > 0;
+  }
+
+  const lobby = resolveLobby(agentId);
+  if (lobby) {
+    if (lobby.phase === 'forming') {
+      const state = lobby.getLobbyState(agentId);
+      return peekNewMessages(agentId, `lobby:${lobby.lobbyId}`, state.chat).length > 0;
+    } else if (lobby.phase === 'pre_game') {
+      const teamState = lobby.getTeamState(agentId);
+      if (teamState) {
+        return peekNewMessages(agentId, `pregame:${lobby.lobbyId}`, teamState.chat).length > 0;
+      }
+    }
+  }
+
+  return false;
 }
 
 function createAgentMcpServer(
@@ -691,7 +746,13 @@ Example settings.json structure:
           return jsonResult({ reason: 'new_turn', ...state });
         }
 
-        // Move submitted — wait for turn resolution, teammate chat, or keepalive
+        // Check for pending updates BEFORE blocking — if there are unseen messages, return immediately
+        if (hasPendingUpdates(aid(), resolveGame, resolveLobby)) {
+          const updates = buildUpdates(aid(), resolveGame, resolveLobby);
+          return jsonResult({ reason: 'update', ...updates });
+        }
+
+        // Move submitted, no pending updates — wait for turn resolution, teammate chat, or keepalive
         const prevTurn = game.turn;
         await Promise.race([
           waitForNextTurn(game.gameId, 25000),
@@ -719,6 +780,12 @@ Example settings.json structure:
 
       // === Lobby phase ===
       if (lobby) {
+        // Check for pending updates BEFORE blocking
+        if (hasPendingUpdates(aid(), resolveGame, resolveLobby)) {
+          const updates = buildUpdates(aid(), resolveGame, resolveLobby);
+          return jsonResult({ reason: 'update', ...updates });
+        }
+
         const prevPhase = lobby.phase;
         await waitForAgentUpdate(aid(), 25000);
 

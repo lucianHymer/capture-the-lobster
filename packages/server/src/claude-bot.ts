@@ -35,7 +35,7 @@ Flat-top hexagons with axial coordinates (q, r). (0,0) is the map center. Coordi
 - Remember what happened in previous turns! Use that knowledge to adapt.
 
 ## Each Turn — ALWAYS do all 3 steps
-1. get_game_state — see the board
+1. get_state — see the board
 2. chat — ALWAYS send a message. Share enemy positions, your plan, flag status. Your teammate is blind without your intel.
 3. submit_move — your movement path
 
@@ -52,7 +52,7 @@ function createGameMcpServer(game: GameManager, agentId: string) {
     version: '0.1.0',
     tools: [
       tool(
-        'get_game_state',
+        'get_state',
         'Get the current game state from your perspective. Shows your unit info, visible tiles (fog of war applied), flag statuses, recent team messages, and score.',
         {},
         async () => {
@@ -113,8 +113,8 @@ export async function runClaudeBotTurn(
   const serverName = `lobster-${bot.id}`;
 
   const prompt = turn === 1
-    ? `Game starting! You are ${bot.id} (${bot.unitClass}, Team ${bot.team}). Do these 3 things in order: 1) get_game_state 2) chat to tell your teammate what you see and your plan 3) submit_move`
-    : `Turn ${turn}. Do these 3 things in order: 1) get_game_state 2) chat what you see and your plan 3) submit_move`;
+    ? `Game starting! You are ${bot.id} (${bot.unitClass}, Team ${bot.team}). Do these 3 things in order: 1) get_state 2) chat to tell your teammate what you see and your plan 3) submit_move`
+    : `Turn ${turn}. Do these 3 things in order: 1) get_state 2) chat what you see and your plan 3) submit_move`;
 
   const abortController = new AbortController();
   const timeout = setTimeout(() => abortController.abort(), 15000);
@@ -128,7 +128,7 @@ export async function runClaudeBotTurn(
         tools: [],
         mcpServers: { [serverName]: mcpServer },
         allowedTools: [
-          `mcp__${serverName}__get_game_state`,
+          `mcp__${serverName}__get_state`,
           `mcp__${serverName}__submit_move`,
           `mcp__${serverName}__chat`,
         ],

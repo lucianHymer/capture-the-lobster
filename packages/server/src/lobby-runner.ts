@@ -71,7 +71,7 @@ const LOBBY_SYSTEM_PROMPT = `You are a competitive AI agent in the lobby for "Ca
 You are in the team formation lobby. There are multiple agents here. You need to form a team of the required size.
 
 ## What to do:
-1. Use get_lobby to see who's in the lobby and current team state
+1. Use get_state to see who's in the lobby and current team state
 2. Use chat to talk to other agents — negotiate, introduce yourself, propose alliances
 3. Use propose_team to invite another agent to your team (or create a new team with them)
 4. Use accept_team to accept a team invitation
@@ -98,7 +98,7 @@ const PREGAME_SYSTEM_PROMPT = `You are picking your class for "Capture the Lobst
 Rogue > Mage > Knight > Rogue
 
 ## What to do:
-1. Use get_team_state to see your teammates and what classes they've picked
+1. Use get_state to see your teammates and what classes they've picked
 2. Use chat to coordinate with your team
 3. Use choose_class to pick your class
 
@@ -405,7 +405,7 @@ export class LobbyRunner {
       version: '0.1.0',
       tools: [
         tool(
-          'get_lobby',
+          'get_state',
           'Get the current lobby state: who is here, teams formed, recent chat messages.',
           {},
           async () => {
@@ -476,7 +476,7 @@ export class LobbyRunner {
           tools: [],
           mcpServers: { [serverName]: mcpServer },
           allowedTools: [
-            `mcp__${serverName}__get_lobby`,
+            `mcp__${serverName}__get_state`,
             `mcp__${serverName}__chat`,
             `mcp__${serverName}__propose_team`,
             `mcp__${serverName}__accept_team`,
@@ -592,7 +592,7 @@ export class LobbyRunner {
       version: '0.1.0',
       tools: [
         tool(
-          'get_team_state',
+          'get_state',
           'Get your team state: teammates, their class picks, and time remaining.',
           {},
           async () => {
@@ -628,8 +628,8 @@ export class LobbyRunner {
 
     const serverName = `pregame-${botId}`;
     const prompt = mode === 'discuss'
-      ? `Pre-game discussion. You are ${handle} (${botId}) on Team ${team}. Check your team state with get_team_state, then use chat to discuss strategy and class composition with your teammates. DON'T pick your class yet — just discuss who should play what role. A good team needs a mix of classes!`
-      : `Time to pick! You are ${handle} (${botId}) on Team ${team}. Check what your teammates said with get_team_state, read the team chat, then choose_class based on what the team agreed. If no agreement, pick what the team is missing.`;
+      ? `Pre-game discussion. You are ${handle} (${botId}) on Team ${team}. Call get_state to see your teammates, then use chat to discuss strategy and class composition. DON'T pick your class yet — just discuss who should play what role. A good team needs a mix of classes!`
+      : `Time to pick! You are ${handle} (${botId}) on Team ${team}. Call get_state to see what your teammates said and picked, then choose_class based on what the team agreed. If no agreement, pick what the team is missing.`;
 
     const localAbort = new AbortController();
     const onRunnerAbort = () => localAbort.abort();
@@ -646,7 +646,7 @@ export class LobbyRunner {
           tools: [],
           mcpServers: { [serverName]: mcpServer },
           allowedTools: [
-            `mcp__${serverName}__get_team_state`,
+            `mcp__${serverName}__get_state`,
             `mcp__${serverName}__chat`,
             `mcp__${serverName}__choose_class`,
           ],

@@ -76,6 +76,8 @@ export class LobsterMCPServer {
   private lobbyManager: LobbyManager | null = null;
   private gameManager: GameManager | null = null;
   private agentId: string;
+  /** Per-context message cursor tracking */
+  private messageCursors = new Map<string, number>();
 
   constructor(agentId: string) {
     this.agentId = agentId;
@@ -101,6 +103,14 @@ export class LobsterMCPServer {
     await this.mcpServer.connect(transport);
   }
 
+  /** Get new messages since last response and advance cursor */
+  private getNewMessages(context: string, allMessages: any[]): any[] {
+    const lastSeen = this.messageCursors.get(context) ?? 0;
+    const newMsgs = allMessages.slice(lastSeen);
+    this.messageCursors.set(context, allMessages.length);
+    return newMsgs;
+  }
+
   /** Build lightweight updates envelope for action responses */
   private buildUpdates(): Record<string, unknown> {
     const updates: Record<string, unknown> = {};
@@ -108,8 +118,8 @@ export class LobsterMCPServer {
       updates.phase = this.gameManager.phase === 'finished' ? 'finished' : 'game';
       updates.turn = this.gameManager.turn;
       updates.moveSubmitted = this.gameManager.moveSubmissions.has(this.agentId);
-      const messages = this.gameManager.getTeamMessages(this.agentId);
-      updates.newMessages = messages.slice(-10);
+      const allMessages = this.gameManager.getTeamMessages(this.agentId);
+      updates.newMessages = this.getNewMessages(`game`, allMessages);
       if (this.gameManager.phase === 'finished') {
         updates.gameOver = true;
         updates.winner = this.gameManager.winner;
@@ -118,6 +128,15 @@ export class LobsterMCPServer {
     }
     if (this.lobbyManager) {
       updates.phase = this.lobbyManager.phase;
+      if (this.lobbyManager.phase === 'lobby') {
+        const state = this.lobbyManager.getState();
+        updates.newMessages = this.getNewMessages(`lobby`, state.chat);
+      } else if (this.lobbyManager.phase === 'pre_game') {
+        const teamState = this.lobbyManager.getTeamState(this.agentId);
+        if (teamState) {
+          updates.members = teamState.members;
+        }
+      }
       return updates;
     }
     updates.phase = 'none';
@@ -125,19 +144,42 @@ export class LobsterMCPServer {
   }
 
   private registerTools(): void {
-    // ==================== Lobby Phase Tools ====================
+    // ==================== Unified State Tool ====================
 
     this.mcpServer.tool(
-      'get_lobby',
-      'Get the current lobby state: connected agents, teams, chat messages, and time remaining before the game starts.',
+      'get_state',
+      'Get current state. Returns phase-appropriate full state: lobby info during forming, team state during pre-game, full board state during game.',
       {},
       async () => {
-        if (!this.lobbyManager) {
-          return errorResult('No lobby available. Game has not been created yet.');
+        // Game phase — full board state
+        if (this.gameManager) {
+          if (this.gameManager.phase === 'finished') {
+            const state = this.gameManager.getStateForAgent(this.agentId);
+            return jsonResult({ phase: 'finished', ...state, winner: this.gameManager.winner });
+          }
+          try {
+            const state = this.gameManager.getStateForAgent(this.agentId);
+            return jsonResult({ phase: 'game', ...state });
+          } catch (err) {
+            return errorResult(err instanceof Error ? err.message : 'Failed to get game state.');
+          }
         }
-        return jsonResult(this.lobbyManager.getState());
+
+        // Lobby/pre-game phase
+        if (this.lobbyManager) {
+          if (this.lobbyManager.phase === 'pre_game') {
+            const teamState = this.lobbyManager.getTeamState(this.agentId);
+            if (!teamState) return errorResult('You are not on a team yet.');
+            return jsonResult({ phase: 'pre_game', ...teamState });
+          }
+          return jsonResult({ phase: this.lobbyManager.phase, ...this.lobbyManager.getState() });
+        }
+
+        return errorResult('No lobby or game available.');
       },
     );
+
+    // ==================== Lobby Phase Tools ====================
 
     this.mcpServer.tool(
       'chat',
@@ -222,44 +264,7 @@ export class LobsterMCPServer {
       },
     );
 
-    this.mcpServer.tool(
-      'get_team_state',
-      'Get your team\'s current composition and readiness status.',
-      {},
-      async () => {
-        if (!this.lobbyManager) {
-          return errorResult('No lobby available.');
-        }
-        const teamState = this.lobbyManager.getTeamState(this.agentId);
-        if (!teamState) {
-          return errorResult('You are not on a team yet.');
-        }
-        return jsonResult(teamState);
-      },
-    );
-
     // ==================== Game Phase Tools ====================
-
-    this.mcpServer.tool(
-      'get_game_state',
-      'Get the current game state from your perspective (full state with visible tiles).',
-      {},
-      async () => {
-        if (!this.gameManager) {
-          return errorResult('No game in progress. The game has not started yet.');
-        }
-        if (this.gameManager.phase === 'finished') {
-          const state = this.gameManager.getStateForAgent(this.agentId);
-          return jsonResult({ ...state, winner: this.gameManager.winner });
-        }
-        try {
-          const state = this.gameManager.getStateForAgent(this.agentId);
-          return jsonResult(state);
-        } catch (err) {
-          return errorResult(err instanceof Error ? err.message : 'Failed to get game state.');
-        }
-      },
-    );
 
     this.mcpServer.tool(
       'submit_move',
