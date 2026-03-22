@@ -347,7 +347,7 @@ export default function GamePage() {
     selectedTeam === 'all' ? 'All Chat' : `Team ${selectedTeam} Chat`;
 
   return (
-    <div className="flex flex-col h-[calc(100vh-5rem)] -mx-6 -my-8 px-4 py-3 gap-2">
+    <div className="flex flex-col md:h-[calc(100vh-5rem)] -mx-6 -my-8 px-4 py-3 gap-2">
       {/* Top bar */}
       <div className="flex flex-wrap items-center justify-between bg-gray-900 rounded-lg px-3 py-2 shrink-0 gap-2">
         <div className="flex items-center gap-2 sm:gap-4">
@@ -397,9 +397,9 @@ export default function GamePage() {
       </div>
 
       {/* Main content area — stacks on mobile */}
-      <div className="flex flex-col md:flex-row gap-2 flex-1 min-h-0 overflow-hidden">
+      <div className="flex flex-col md:flex-row gap-2 flex-1 min-h-0 md:overflow-hidden">
         {/* Hex grid */}
-        <div className="flex-1 bg-gray-900/50 rounded-lg p-1 flex items-center justify-center min-w-0 min-h-[50vh] md:min-h-0 overflow-hidden">
+        <div className="flex-1 bg-gray-900/50 rounded-lg p-1 flex items-center justify-center min-w-0 aspect-square md:aspect-auto md:min-h-0 overflow-hidden">
           <HexGrid
             tiles={gameState.tiles}
             mapRadius={gameState.mapRadius}
@@ -419,10 +419,10 @@ export default function GamePage() {
           />
         </div>
 
-        {/* Sidebar — horizontal on mobile, vertical on desktop */}
-        <div className="flex flex-row md:flex-col gap-2 md:w-52 shrink-0 min-h-0 overflow-hidden">
+        {/* Sidebar — stacks vertically on mobile and desktop */}
+        <div className="flex flex-col gap-2 md:w-52 shrink-0 min-h-0 overflow-hidden">
           {/* Kill feed */}
-          <div className="bg-gray-900 rounded-lg p-3 flex flex-col gap-2 flex-1 md:max-h-[40%] overflow-hidden">
+          <div className="bg-gray-900 rounded-lg p-3 flex flex-col gap-2 max-h-32 md:max-h-[40%] overflow-hidden">
             <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wider">
               Kills
             </h3>
@@ -432,7 +432,7 @@ export default function GamePage() {
           </div>
 
           {/* Chat log */}
-          <div className="bg-gray-900 rounded-lg p-3 flex flex-col gap-2 flex-1 overflow-hidden">
+          <div className="bg-gray-900 rounded-lg p-3 flex flex-col gap-2 max-h-48 md:max-h-none md:flex-1 overflow-hidden">
             <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wider">
               {chatTeamLabel}
             </h3>
@@ -458,7 +458,7 @@ export default function GamePage() {
               : 'text-yellow-400';
             if (chatToShow.length === 0) return null;
             return (
-              <div className="bg-gray-900 rounded-lg p-3 flex flex-col gap-2 flex-1 md:max-h-[30%] overflow-hidden">
+              <div className="bg-gray-900 rounded-lg p-3 flex flex-col gap-2 max-h-40 md:max-h-[30%] overflow-hidden">
                 <button
                   onClick={() => setShowLobbyChat(!showLobbyChat)}
                   className="text-xs font-semibold text-gray-400 uppercase tracking-wider text-left flex items-center gap-1 cursor-pointer hover:text-gray-300"
