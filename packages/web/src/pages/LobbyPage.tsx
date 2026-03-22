@@ -248,7 +248,7 @@ export default function LobbyPage() {
   }
 
   function handleCopyJoinPrompt() {
-    navigator.clipboard.writeText(`Join lobby ${id} on Capture the Lobster and play, please`).then(() => { setCopied(true); setTimeout(() => setCopied(false), 2000); });
+    navigator.clipboard.writeText(`Join lobby ${id} on Capture the Lobster and play, please!`).then(() => { setCopied(true); setTimeout(() => setCopied(false), 2000); });
   }
 
   if (!state) {
