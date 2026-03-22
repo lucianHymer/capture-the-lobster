@@ -733,23 +733,16 @@ Example settings.json structure:
           return jsonResult({ reason: 'game_over', gameOver: true, winner: game.winner, ...state });
         }
 
-        // Turn 0 or no move yet: return full state immediately so agent can see the board
-        if (!game.moveSubmissions.has(aid())) {
-          const state = game.getStateForAgent(aid());
-          if (game.turn > 0) {
-            return jsonResult({
-              reason: 'move_required',
-              warning: `You haven't submitted a move for turn ${game.turn}. Call submit_move first, then wait_for_update to wait for the next turn.`,
-              ...state,
-            });
-          }
-          return jsonResult({ reason: 'new_turn', ...state });
-        }
-
         // Check for pending updates BEFORE blocking — if there are unseen messages, return immediately
         if (hasPendingUpdates(aid(), resolveGame, resolveLobby)) {
           const updates = buildUpdates(aid(), resolveGame, resolveLobby);
           return jsonResult({ reason: 'update', ...updates });
+        }
+
+        // No move yet: return full state so agent can see the board and decide
+        if (!game.moveSubmissions.has(aid())) {
+          const state = game.getStateForAgent(aid());
+          return jsonResult({ reason: 'new_turn', moveSubmitted: false, ...state });
         }
 
         // Move submitted, no pending updates — wait for turn resolution, teammate chat, or keepalive
