@@ -8,114 +8,84 @@ interface Player {
   wins: number;
 }
 
-const mockPlayers: Player[] = [];
-
-function rankDecoration(rank: number) {
-  switch (rank) {
-    case 1:
-      return 'text-yellow-400 font-bold';
-    case 2:
-      return 'text-gray-300 font-bold';
-    case 3:
-      return 'text-amber-600 font-bold';
-    default:
-      return 'text-gray-500';
-  }
+function rankStyle(rank: number) {
+  if (rank === 1) return { color: 'var(--color-amber-glow)', fontWeight: 700 };
+  if (rank === 2) return { color: 'var(--color-wood-light)', fontWeight: 700 };
+  if (rank === 3) return { color: 'var(--color-amber-dim)', fontWeight: 700 };
+  return { color: 'var(--color-ink-faint)' };
 }
 
-function eloColor(rank: number) {
-  if (rank <= 3) return 'text-yellow-400';
-  return 'text-gray-100';
-}
-
-function winRateColor(rate: number) {
-  if (rate >= 50) return 'text-green-400';
-  return 'text-red-400';
+function eloStyle(rank: number) {
+  if (rank <= 3) return { color: 'var(--color-amber)' };
+  return { color: 'var(--color-ink)' };
 }
 
 export default function LeaderboardPage() {
-  const [players, setPlayers] = useState<Player[]>(mockPlayers);
+  const [players, setPlayers] = useState<Player[]>([]);
 
   useEffect(() => {
     let cancelled = false;
-
     async function load() {
       try {
         const data = await fetchLeaderboard();
         if (!cancelled) setPlayers(data as Player[]);
-      } catch {
-        // API not available yet — keep mock data
-      }
+      } catch {}
     }
-
     load();
-    return () => {
-      cancelled = true;
-    };
+    return () => { cancelled = true; };
   }, []);
 
   const sorted = [...players].sort((a, b) => b.elo - a.elo);
 
   return (
     <div>
-      <h2 className="mb-6 text-2xl font-bold text-gray-100">Leaderboard</h2>
+      <h2 className="font-heading mb-4 sm:mb-6 text-xl sm:text-2xl font-bold tracking-wide" style={{ color: 'var(--color-ink)' }}>Leaderboard</h2>
 
-      <div className="overflow-x-auto rounded-lg border border-gray-800">
+      <div className="overflow-x-auto rounded-xl parchment-strong">
         <table className="w-full text-sm">
           <thead>
-            <tr className="border-b border-gray-800 bg-gray-900 text-left text-xs uppercase tracking-wider text-gray-500">
-              <th className="px-5 py-3 w-16">#</th>
-              <th className="px-5 py-3">Handle</th>
-              <th className="px-5 py-3 text-right">ELO</th>
-              <th className="px-5 py-3 text-right">Games</th>
-              <th className="px-5 py-3 text-right">Wins</th>
-              <th className="px-5 py-3 text-right">Win Rate</th>
+            <tr className="text-left font-heading text-xs uppercase tracking-wider" style={{ borderBottom: '2px solid rgba(42, 31, 14, 0.1)', color: 'var(--color-ink-faint)' }}>
+              <th className="px-2 sm:px-5 py-2 sm:py-3 w-10 sm:w-16">#</th>
+              <th className="px-2 sm:px-5 py-2 sm:py-3">Handle</th>
+              <th className="px-2 sm:px-5 py-2 sm:py-3 text-right">ELO</th>
+              <th className="hidden sm:table-cell px-5 py-3 text-right">Games</th>
+              <th className="hidden sm:table-cell px-5 py-3 text-right">Wins</th>
+              <th className="px-2 sm:px-5 py-2 sm:py-3 text-right">W%</th>
             </tr>
           </thead>
           <tbody>
             {sorted.map((player, i) => {
               const rank = i + 1;
-              const winRate = player.gamesPlayed > 0
-                ? Math.round((player.wins / player.gamesPlayed) * 100)
-                : 0;
+              const winRate = player.gamesPlayed > 0 ? Math.round((player.wins / player.gamesPlayed) * 100) : 0;
 
               return (
                 <tr
                   key={player.handle}
-                  className={`border-b border-gray-800/50 transition-colors hover:bg-gray-800/40 ${
-                    rank % 2 === 0 ? 'bg-gray-900/30' : ''
-                  }`}
+                  className="transition-colors"
+                  style={{
+                    borderBottom: '1px solid rgba(42, 31, 14, 0.06)',
+                    background: rank % 2 === 0 ? 'rgba(42, 31, 14, 0.02)' : 'transparent',
+                  }}
                 >
-                  {/* Rank */}
-                  <td className={`px-5 py-3 ${rankDecoration(rank)}`}>
+                  <td className="px-2 sm:px-5 py-2 sm:py-3 font-heading" style={rankStyle(rank)}>
                     {rank}
                   </td>
-
-                  {/* Handle */}
-                  <td className="px-5 py-3">
-                    <span className="font-mono text-gray-200">
-                      {rank === 1 && <span className="mr-1.5">{'\u{1F99E}'}</span>}
+                  <td className="px-2 sm:px-5 py-2 sm:py-3">
+                    <span className="font-mono text-xs sm:text-sm" style={{ color: 'var(--color-ink)' }}>
+                      {rank === 1 && <span className="mr-1.5">🦞</span>}
                       {player.handle}
                     </span>
                   </td>
-
-                  {/* ELO */}
-                  <td className={`px-5 py-3 text-right text-base font-bold ${eloColor(rank)}`}>
+                  <td className="px-2 sm:px-5 py-2 sm:py-3 text-right text-sm sm:text-base font-bold font-heading" style={eloStyle(rank)}>
                     {player.elo}
                   </td>
-
-                  {/* Games Played */}
-                  <td className="px-5 py-3 text-right text-gray-400">
+                  <td className="hidden sm:table-cell px-5 py-3 text-right" style={{ color: 'var(--color-ink-light)' }}>
                     {player.gamesPlayed}
                   </td>
-
-                  {/* Wins */}
-                  <td className="px-5 py-3 text-right text-gray-400">
+                  <td className="hidden sm:table-cell px-5 py-3 text-right" style={{ color: 'var(--color-ink-light)' }}>
                     {player.wins}
                   </td>
-
-                  {/* Win Rate */}
-                  <td className={`px-5 py-3 text-right font-medium ${winRateColor(winRate)}`}>
+                  <td className="px-2 sm:px-5 py-2 sm:py-3 text-right font-medium" style={{ color: winRate >= 50 ? 'var(--color-forest)' : 'var(--color-blood)' }}>
                     {winRate}%
                   </td>
                 </tr>
