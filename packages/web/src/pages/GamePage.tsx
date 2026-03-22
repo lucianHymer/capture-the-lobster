@@ -399,7 +399,32 @@ export default function GamePage() {
       {/* Main content area — stacks on mobile */}
       <div className="flex flex-col md:flex-row gap-2 flex-1 min-h-0 md:overflow-hidden">
         {/* Hex grid */}
-        <div className="flex-1 bg-gray-900/50 rounded-lg p-1 flex items-center justify-center min-w-0 aspect-square md:aspect-auto md:min-h-0 overflow-hidden">
+        <div className="flex-1 bg-gray-900/50 rounded-lg p-1 flex items-center justify-center min-w-0 aspect-square md:aspect-auto md:min-h-0 overflow-hidden relative">
+          {gameState.phase === 'finished' && (
+            <div className="absolute inset-0 z-20 flex items-center justify-center bg-black/60 backdrop-blur-sm rounded-lg">
+              <div className="text-center px-8 py-6">
+                {gameState.winner ? (
+                  <>
+                    <div className="text-5xl md:text-7xl font-black mb-3" style={{ color: gameState.winner === 'A' ? '#60a5fa' : '#f87171' }}>
+                      {gameState.winner === 'A' ? '🔵' : '🔴'} TEAM {gameState.winner} WINS!
+                    </div>
+                    <div className="text-xl md:text-2xl text-gray-300 font-medium">
+                      captured the lobster 🦞
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div className="text-5xl md:text-7xl font-black text-gray-400 mb-3">
+                      DRAW
+                    </div>
+                    <div className="text-xl md:text-2xl text-gray-500 font-medium">
+                      Turn limit reached — no capture
+                    </div>
+                  </>
+                )}
+              </div>
+            </div>
+          )}
           <HexGrid
             tiles={gameState.tiles}
             mapRadius={gameState.mapRadius}
