@@ -409,28 +409,42 @@ export class SmartBot implements Bot {
   // --- Chat ---
 
   decideChat(state: GameState): string | null {
-    if (Math.random() > 0.3) return null;
-
-    // Carrying flag
-    if (state.yourUnit.carryingFlag) {
-      return 'I have their flag, heading home!';
+    if (!state.yourUnit.alive) {
+      return 'Down! Respawning next turn.';
     }
 
-    // Report visible enemies
+    // Carrying flag — always report
+    if (state.yourUnit.carryingFlag) {
+      return 'I have their flag! Heading home.';
+    }
+
     const pos = state.yourUnit.position;
+    const parts: string[] = [];
+
+    // Report position
+    parts.push(`I'm at (${pos.q},${pos.r})`);
+
+    // Report visible enemies
     for (const t of state.visibleTiles) {
       if (t.unit && t.unit.team !== this.team) {
         const dir = compassDirection(pos, { q: t.q, r: t.r });
-        return `I see a ${t.unit.unitClass} to the ${dir}`;
+        parts.push(`${t.unit.unitClass} to the ${dir}`);
       }
     }
 
-    // Low options / general
-    if (!state.yourUnit.alive) {
-      return 'Down! Respawning...';
+    // Report enemy flag if visible
+    for (const t of state.visibleTiles) {
+      if (t.flag && t.flag.team !== this.team) {
+        const dir = compassDirection(pos, { q: t.q, r: t.r });
+        parts.push(`enemy flag ${dir}`);
+      }
     }
 
-    return null;
+    if (parts.length === 1) {
+      parts.push('no enemies visible');
+    }
+
+    return parts.join('. ') + '.';
   }
 }
 

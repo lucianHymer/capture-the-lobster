@@ -328,10 +328,8 @@ export class GameServer {
     }, 30000);
 
     // Enable Claude Agent SDK bots (uses local credentials from ~/.claude)
-    this.useClaudeBots = process.env.USE_CLAUDE_BOTS !== 'false';
-    console.log(this.useClaudeBots
-      ? 'Claude Agent SDK bots enabled (haiku) — using local credentials'
-      : 'Claude bots disabled — using heuristic bots');
+    this.useClaudeBots = true;
+    console.log('Claude Agent SDK bots enabled (haiku)');
 
     this.setupRoutes();
     this.setupWebSocket();
@@ -887,21 +885,11 @@ export class GameServer {
   private async runBots(room: GameRoom): Promise<void> {
     const { game, botHandles } = room;
 
-    if (room.useClaudeBots) {
-      // Claude bots with their own timeout
-      await Promise.race([
-        runAllBotsTurn(game, room.botSessions, game.turn),
-        new Promise<void>((resolve) => setTimeout(resolve, room.turnTimeoutMs - 2000)),
-      ]);
-    } else {
-      // Heuristic bots — instant random moves
-      for (const botId of botHandles) {
-        const unit = game.units.find((u) => u.id === botId);
-        if (!unit || !unit.alive) continue;
-        const randomDir = ALL_DIRECTIONS[Math.floor(Math.random() * ALL_DIRECTIONS.length)];
-        game.submitMove(botId, [randomDir]);
-      }
-    }
+    // Claude bots with their own timeout
+    await Promise.race([
+      runAllBotsTurn(game, room.botSessions, game.turn),
+      new Promise<void>((resolve) => setTimeout(resolve, room.turnTimeoutMs - 2000)),
+    ]);
 
     // Submit empty moves for bots that didn't submit
     for (const botId of botHandles) {
@@ -965,7 +953,7 @@ export class GameServer {
     }
 
     // Small delay before starting next turn (gives spectators time to see state)
-    const nextTurnDelay = room.useClaudeBots ? 1000 : 500;
+    const nextTurnDelay = 1000;
     room.turnTimer = setTimeout(() => {
       this.startNextTurn(gameId);
     }, nextTurnDelay);

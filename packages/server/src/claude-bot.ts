@@ -131,7 +131,7 @@ export async function runClaudeBotTurn(
           `mcp__${serverName}__submit_move`,
           `mcp__${serverName}__team_chat`,
         ],
-        maxTurns: 10,
+        maxTurns: 5,
         abortController,
         cwd: '/tmp',
         // Resume existing session if we have one

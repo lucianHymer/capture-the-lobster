@@ -361,15 +361,16 @@ export class LobbyRunner {
         return;
       }
 
-      // Check if enough agents to auto-merge into 2 teams
+      // If enough agents AND all are bots, auto-merge quickly (no humans to negotiate)
       const totalAgents = this.lobby.agents.size;
       if (totalAgents >= this.teamSize * 2) {
-        // We have enough agents — check if teams can be auto-merged
-        // Give them a bit more time to negotiate naturally if under 30s
-        const elapsed = Date.now() - startTime;
-        if (elapsed > 30000 || this.getFullTeams().length >= 2) {
-          return;
+        const allBots = [...this.lobby.agents.keys()].every((id) => this.botIds.has(id));
+        if (allBots) {
+          const elapsed = Date.now() - startTime;
+          if (elapsed > 5000) return; // give bots 5s to chat then auto-merge
         }
+        // Mixed or all-external: only auto-merge if 2 full teams already formed
+        if (this.getFullTeams().length >= 2) return;
       }
 
       // Check timeout
