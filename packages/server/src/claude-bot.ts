@@ -58,7 +58,7 @@ function createGameMcpServer(game: GameManager, agentId: string) {
         async () => {
           try {
             const state = game.getStateForAgent(agentId);
-            return { content: [{ type: 'text' as const, text: JSON.stringify(state, null, 2) }] };
+            return { content: [{ type: 'text' as const, text: JSON.stringify(state) }] };
           } catch (err: any) {
             return { content: [{ type: 'text' as const, text: `Error: ${err.message}` }], isError: true };
           }

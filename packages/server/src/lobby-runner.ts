@@ -410,7 +410,7 @@ export class LobbyRunner {
           {},
           async () => {
             const state = lobby.getLobbyState(botId);
-            return { content: [{ type: 'text' as const, text: JSON.stringify(state, null, 2) }] };
+            return { content: [{ type: 'text' as const, text: JSON.stringify(state) }] };
           },
         ),
         tool(
@@ -597,7 +597,7 @@ export class LobbyRunner {
           {},
           async () => {
             const state = lobby.getTeamState(botId);
-            return { content: [{ type: 'text' as const, text: JSON.stringify(state, null, 2) }] };
+            return { content: [{ type: 'text' as const, text: JSON.stringify(state) }] };
           },
         ),
         tool(

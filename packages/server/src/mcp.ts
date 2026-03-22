@@ -58,7 +58,7 @@ function isValidDirection(d: string): d is Direction {
 
 function jsonResult(data: unknown): { content: { type: 'text'; text: string }[] } {
   return {
-    content: [{ type: 'text' as const, text: JSON.stringify(data, null, 2) }],
+    content: [{ type: 'text' as const, text: JSON.stringify(data) }],
   };
 }
 
@@ -103,10 +103,11 @@ export class LobsterMCPServer {
     await this.mcpServer.connect(transport);
   }
 
-  /** Get new messages since last response and advance cursor */
+  /** Get new messages since last response and advance cursor.
+   *  Filters out the agent's own messages to save tokens. */
   private getNewMessages(context: string, allMessages: any[]): any[] {
     const lastSeen = this.messageCursors.get(context) ?? 0;
-    const newMsgs = allMessages.slice(lastSeen);
+    const newMsgs = allMessages.slice(lastSeen).filter((m: any) => m.from !== this.agentId);
     this.messageCursors.set(context, allMessages.length);
     return newMsgs;
   }

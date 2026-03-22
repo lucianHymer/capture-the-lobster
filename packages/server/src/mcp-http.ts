@@ -79,7 +79,7 @@ function isValidDirection(d: string): d is Direction {
 }
 
 function jsonResult(data: unknown) {
-  return { content: [{ type: 'text' as const, text: JSON.stringify(data, null, 2) }] };
+  return { content: [{ type: 'text' as const, text: JSON.stringify(data) }] };
 }
 
 function errorResult(message: string) {
@@ -164,11 +164,12 @@ function getMessageCursorKey(agentId: string, context: string): string {
   return `${agentId}:${context}`;
 }
 
-/** Get new messages since this agent last received a response, and advance cursor */
+/** Get new messages since this agent last received a response, and advance cursor.
+ *  Filters out the agent's own messages to save tokens — they already know what they said. */
 function getNewMessages(agentId: string, context: string, allMessages: any[]): any[] {
   const key = getMessageCursorKey(agentId, context);
   const lastSeen = agentMessageCursor.get(key) ?? 0;
-  const newMsgs = allMessages.slice(lastSeen);
+  const newMsgs = allMessages.slice(lastSeen).filter((m: any) => m.from !== agentId);
   agentMessageCursor.set(key, allMessages.length);
   return newMsgs;
 }
