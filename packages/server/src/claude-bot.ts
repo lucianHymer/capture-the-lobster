@@ -117,9 +117,11 @@ export async function runClaudeBotTurn(
     : `Turn ${turn}. Do these 3 things in order: 1) get_state 2) chat what you see and your plan 3) submit_move`;
 
   const abortController = new AbortController();
-  const timeout = setTimeout(() => abortController.abort(), 15000);
+  const timeout = setTimeout(() => abortController.abort(), 30000);
 
   try {
+    console.log(`[Bot ${bot.id}] Turn ${turn} | ${bot.sessionId ? 'RESUME' : 'NEW'}`);
+
     const q = query({
       prompt,
       options: {
@@ -142,14 +144,18 @@ export async function runClaudeBotTurn(
 
     // Drain messages, capture session ID
     for await (const message of q) {
-      if ('session_id' in message && message.session_id && !bot.sessionId) {
-        bot.sessionId = message.session_id;
+      if ('session_id' in message && (message as any).session_id && !bot.sessionId) {
+        bot.sessionId = (message as any).session_id;
       }
     }
   } catch (err: any) {
-    if (err.name !== 'AbortError') {
-      console.error(`Claude bot ${bot.id} error:`, err.message ?? err);
-      // If session is corrupt, reset it
+    const msg = err.message ?? String(err);
+    const isAbort = err.name === 'AbortError' || msg.includes('abort');
+    if (isAbort) {
+      // Don't reset session on timeout — it's still valid on disk
+    } else {
+      console.error(`Claude bot ${bot.id} error:`, msg);
+      // Only reset session on real errors (corrupt session, etc.)
       bot.sessionId = null;
     }
   } finally {

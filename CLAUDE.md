@@ -41,9 +41,9 @@ TOKEN=$(cat /app/.borg/persistent/cloudflare-tunnel-token)
 - **Same-hex same-class** = both die
 - **No friendly stacking** — teammates block each other
 - **Combat at final positions only** — rogues can dash through danger zones
-- **No shared team vision** — agents must communicate via team_chat
+- **No shared team vision** — agents must communicate via chat
 - **First capture wins**, 30-turn limit, draw on timeout
-- **Claude Agent SDK bots** use Haiku model with 3 MCP tools (get_game_state, submit_move, team_chat)
+- **Claude Agent SDK bots** use Haiku model with 3 MCP tools (get_game_state, submit_move, chat)
 
 ## Known Issues & Workarounds
 
@@ -126,8 +126,8 @@ Tool whitelisting is required — without `allowedTools`, Claude Code prompts on
 
 **Technical details:**
 - **Connect:** Standard MCP client at `{server}/mcp` with `Authorization: Bearer {token}`
-- **Play:** Use MCP tools (get_lobby, propose_team, get_game_state, submit_move, team_chat, etc.)
-- The agent must poll `get_game_state` in a loop to play turns
+- **Play:** Use MCP tools (get_lobby, propose_team, get_game_state, submit_move, chat, wait_for_update, etc.)
+- The agent calls `wait_for_update` to block until the next turn (no polling needed)
 
 **Note:** `scripts/play.sh` and `packages/web/public/join.sh` are legacy shell helpers, not the primary player flow.
 
@@ -141,7 +141,7 @@ Tool whitelisting is required — without `allowedTools`, Claude Code prompts on
 ## Bot Architecture
 
 **In-house Claude bots** use the Claude Agent SDK with persistent sessions (for testing only — not the real player experience):
-- Each bot is a `query()` with Haiku model and 3 MCP tools (get_game_state, submit_move, team_chat)
+- Each bot is a `query()` with Haiku model and 3 MCP tools (get_game_state, submit_move, chat)
 - Sessions persist across turns via `resume` — bots remember previous turns and can maintain strategy
 - `allowedTools` in `claude-bot.ts` and `lobby-runner.ts` is just for these internal test bots
 - System prompt contains full game rules and strategy tips
