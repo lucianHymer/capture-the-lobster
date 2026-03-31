@@ -46,4 +46,12 @@ export interface SpectatorGameState {
   handles?: Record<string, string>;
   /** Per-unit vision for spectator drill-down */
   visibleByUnit?: Record<string, Set<string>>;
+  /** Team A visible hex keys */
+  visibleA?: Set<string>;
+  /** Team B visible hex keys */
+  visibleB?: Set<string>;
+  /** Timestamp when the current turn started */
+  turnStartedAt?: number;
+  /** Turn timeout in milliseconds */
+  turnTimeoutMs?: number;
 }

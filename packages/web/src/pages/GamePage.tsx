@@ -321,7 +321,7 @@ export default function GamePage() {
   const teamACounts: string[] = [];
   const teamBCounts: string[] = [];
   for (const tile of gameState.tiles) {
-    if (tile.unit) {
+    if (tile.unit && tile.unit.id) {
       const classLetter = tile.unit.unitClass[0].toUpperCase();
       if (tile.unit.team === 'A') {
         teamACounts.push(tile.unit.id);
