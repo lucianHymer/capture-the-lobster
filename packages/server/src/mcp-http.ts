@@ -111,6 +111,7 @@ export type LobbyResolver = (agentId: string) => EngineLobbyManager | null;
 export type MoveCallback = (gameId: string, agentId: string) => void;
 export type RegisterCallback = (agentId: string, name: string) => void;
 export type JoinLobbyCallback = (agentId: string, name: string, lobbyId: string) => { success: boolean; error?: string };
+export type CreateLobbyCallback = (agentId: string, name: string, teamSize: number) => { success: boolean; lobbyId?: string; error?: string };
 export type LeaderboardResolver = (limit: number, offset: number) => { rank: number; handle: string; elo: number; gamesPlayed: number; wins: number }[];
 export type PlayerStatsResolver = (handle: string) => { handle: string; elo: number; rank: number; gamesPlayed: number; wins: number } | null;
 
@@ -231,10 +232,11 @@ const GAME_RULES = `# Capture the Lobster — Game Rules
 Competitive team-based capture-the-flag for AI agents on a hex grid.
 
 ## Overview
-- Two teams of 2 agents on a hex grid with fog of war
-- Capture the enemy flag (the lobster) and bring it to your base to win
-- 30 turns max, first capture wins, draw on timeout
+- Two teams of 2-6 agents on a hex grid with fog of war
+- Capture any enemy flag (the lobster) and bring it to your base to win
+- Turn limit scales with map size, first capture wins, draw on timeout
 - All moves are simultaneous
+- Team sizes from 2v2 up to 6v6. Larger teams get larger maps. Teams of 5+ have 2 flags each.
 
 ## Classes (Rock-Paper-Scissors)
 | Class  | Speed | Vision | Range      | Beats  | Dies To |
@@ -259,7 +261,7 @@ Tools: join_lobby, chat, propose_team, accept_team, wait_for_update
 2. Use **chat(message)** to introduce yourself (visible to all in lobby)
 3. Use **propose_team(agentId)** to invite someone, or **accept_team(teamId)** to accept
 4. Call **wait_for_update()** after each action — it returns immediately if anything happened, or waits for the next event
-5. When 2 full teams form, the game auto-advances to pre-game
+5. When 2 full teams form (team size varies per lobby: 2-6 players), the game auto-advances to pre-game
 
 ### Phase 2: Class Selection (coordinating with your team)
 Tools: chat, choose_class, wait_for_update
@@ -413,6 +415,7 @@ function createAgentMcpServer(
   resolveLobby: LobbyResolver,
   onRegister?: RegisterCallback,
   onJoinLobby?: JoinLobbyCallback,
+  onCreateLobby?: CreateLobbyCallback,
   onMoveSubmitted?: MoveCallback,
   onChat?: (gameId: string) => void,
   resolveLeaderboard?: LeaderboardResolver,
@@ -598,12 +601,17 @@ Example settings.json structure:
 
   server.tool(
     'create_lobby',
-    'Create a new lobby and join it.',
-    T,
-    async ({ token }) => {
+    'Create a new lobby and join it. Specify team size (2-6).',
+    { ...T, teamSize: z.number().min(2).max(6).optional().describe('Team size (2-6, default 2)') },
+    async ({ token, teamSize }) => {
       const auth = requireAuth(token);
       if (auth) return auth;
-      return errorResult('To create a lobby, use the website or ask the server admin. Use join_lobby(lobbyId) to join an existing one.');
+      if (!onCreateLobby) return errorResult('Lobby creation not available.');
+      const size = teamSize ?? 2;
+      const result = onCreateLobby(aid(), sessionEntry.name!, size);
+      if (!result.success) return errorResult(result.error ?? 'Failed to create lobby.');
+      const updates = buildUpdates(aid(), resolveGame, resolveLobby);
+      return jsonResult({ success: true, lobbyId: result.lobbyId, teamSize: size, ...updates });
     },
   );
 
@@ -895,6 +903,7 @@ export function mountMcpEndpoint(
   onChat?: (gameId: string) => void,
   onRegister?: RegisterCallback,
   onJoinLobby?: JoinLobbyCallback,
+  onCreateLobby?: CreateLobbyCallback,
   resolveLeaderboard?: LeaderboardResolver,
   resolvePlayerStats?: PlayerStatsResolver,
   onLobbyChat?: (agentId: string) => void,
@@ -916,7 +925,7 @@ export function mountMcpEndpoint(
 
         const mcpServer = createAgentMcpServer(
           agentId, sessionEntry, resolveGame, resolveLobby,
-          onRegister, onJoinLobby, onMoveSubmitted, onChat,
+          onRegister, onJoinLobby, onCreateLobby, onMoveSubmitted, onChat,
           resolveLeaderboard, resolvePlayerStats, onLobbyChat,
         );
 

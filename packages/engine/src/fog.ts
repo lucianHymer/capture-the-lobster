@@ -55,11 +55,21 @@ export function buildVisibleState(
   walls: Set<string>,
   tiles: Map<string, string>, // "q,r" -> tile type
   flags: {
-    A: { position: Hex; carried: boolean; carrierId?: string };
-    B: { position: Hex; carried: boolean; carrierId?: string };
+    A: { position: Hex; carried: boolean; carrierId?: string }[] | { position: Hex; carried: boolean; carrierId?: string };
+    B: { position: Hex; carried: boolean; carrierId?: string }[] | { position: Hex; carried: boolean; carrierId?: string };
   },
 ): VisibleTile[] {
   const visibleKeys = getUnitVision(viewer, walls, new Set(tiles.keys()));
+
+  // Normalize flags to arrays
+  const allFlags: { team: 'A' | 'B'; position: Hex; carried: boolean; carrierId?: string }[] = [];
+  for (const team of ['A', 'B'] as const) {
+    const f = flags[team];
+    const arr = Array.isArray(f) ? f : [f];
+    for (const flag of arr) {
+      allFlags.push({ team, ...flag });
+    }
+  }
 
   // Index alive units by hex key for quick lookup
   const unitsByHex = new Map<string, FogUnit[]>();
@@ -71,19 +81,15 @@ export function buildVisibleState(
     unitsByHex.set(key, list);
   }
 
-  // Index flags by hex key
+  // Index flags by hex key (multiple flags can be on different hexes)
   const flagsByHex = new Map<string, 'A' | 'B'>();
-  for (const team of ['A', 'B'] as const) {
-    const f = flags[team];
-    const flagKey = hexToString(f.position);
-    // Flag is visible on its hex if not carried, OR if carried by a unit on that hex
+  for (const f of allFlags) {
     if (!f.carried) {
-      flagsByHex.set(flagKey, team);
+      flagsByHex.set(hexToString(f.position), f.team);
     } else if (f.carrierId) {
-      // Find carrier position
       const carrier = allUnits.find((u) => u.id === f.carrierId && u.alive);
       if (carrier) {
-        flagsByHex.set(hexToString(carrier.position), team);
+        flagsByHex.set(hexToString(carrier.position), f.team);
       }
     }
   }
@@ -103,14 +109,10 @@ export function buildVisibleState(
     // Check for units on this hex
     const unitsHere = unitsByHex.get(key);
     if (unitsHere && unitsHere.length > 0) {
-      // Pick the first unit on this hex (in practice there should be at most
-      // one per team; enemy stacking is allowed but we report the first).
       const u = unitsHere[0];
       const isAlly = u.team === viewer.team;
 
-      const isCarrying =
-        (flags.A.carrierId === u.id && flags.A.carried) ||
-        (flags.B.carrierId === u.id && flags.B.carried);
+      const isCarrying = allFlags.some(f => f.carrierId === u.id && f.carried);
 
       tile.unit = {
         ...(isAlly ? { id: u.id } : {}),

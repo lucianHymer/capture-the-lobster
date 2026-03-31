@@ -1,6 +1,6 @@
 import { Hex, Direction, hexEquals, hexToString } from './hex.js';
 import { UnitClass, CLASS_SPEED, MoveUnit, MoveSubmission, validatePath, resolveMovements } from './movement.js';
-import { GameMap, TileType } from './map.js';
+import { GameMap, TileType, getMapRadiusForTeamSize } from './map.js';
 import { VisibleTile, FogUnit, buildVisibleState } from './fog.js';
 import { CombatUnit, resolveCombat } from './combat.js';
 
@@ -63,6 +63,11 @@ export interface GameConfig {
   teamSize?: number;
 }
 
+/** Compute turn limit based on map radius */
+export function getTurnLimitForRadius(radius: number): number {
+  return 20 + (radius * 2);
+}
+
 const DEFAULT_CONFIG: Required<GameConfig> = {
   turnLimit: 30,
   turnTimerSeconds: 30,
@@ -75,7 +80,7 @@ export class GameManager {
   readonly config: Required<GameConfig>;
 
   units: GameUnit[];
-  flags: { A: FlagState; B: FlagState };
+  flags: { A: FlagState[]; B: FlagState[] };
   turn: number;
   phase: GamePhase;
   winner: 'A' | 'B' | null;
@@ -111,12 +116,16 @@ export class GameManager {
       }
     }
 
-    // Create units at spawn positions
+    // Create units at spawn positions — distribute across all bases
     const spawnIndexA = { current: 0 };
     const spawnIndexB = { current: 0 };
 
+    // Flatten all spawns across bases for each team
+    const allSpawnsA = map.bases.A.flatMap(b => b.spawns);
+    const allSpawnsB = map.bases.B.flatMap(b => b.spawns);
+
     this.units = players.map((p) => {
-      const spawns = map.bases[p.team].spawns;
+      const spawns = p.team === 'A' ? allSpawnsA : allSpawnsB;
       const spawnIdx = p.team === 'A' ? spawnIndexA : spawnIndexB;
       const position = spawns[spawnIdx.current % spawns.length];
       spawnIdx.current++;
@@ -131,18 +140,18 @@ export class GameManager {
       };
     });
 
-    // Initialize flags at base positions
+    // Initialize flags at base positions (one flag per base)
     this.flags = {
-      A: {
-        team: 'A',
-        position: { ...map.bases.A.flag },
+      A: map.bases.A.map((base) => ({
+        team: 'A' as const,
+        position: { ...base.flag },
         carried: false,
-      },
-      B: {
-        team: 'B',
-        position: { ...map.bases.B.flag },
+      })),
+      B: map.bases.B.map((base) => ({
+        team: 'B' as const,
+        position: { ...base.flag },
         carried: false,
-      },
+      })),
     };
 
     this.turn = 0;
@@ -183,16 +192,16 @@ export class GameManager {
     };
 
     const flagsForFog = {
-      A: {
-        position: this.flags.A.position,
-        carried: this.flags.A.carried,
-        carrierId: this.flags.A.carrierId,
-      },
-      B: {
-        position: this.flags.B.position,
-        carried: this.flags.B.carried,
-        carrierId: this.flags.B.carrierId,
-      },
+      A: this.flags.A.map(f => ({
+        position: f.position,
+        carried: f.carried,
+        carrierId: f.carrierId,
+      })),
+      B: this.flags.B.map(f => ({
+        position: f.position,
+        carried: f.carried,
+        carrierId: f.carrierId,
+      })),
     };
 
     const visibleTiles = buildVisibleState(
@@ -203,38 +212,34 @@ export class GameManager {
       flagsForFog,
     );
 
-    // Determine your flag status
-    const yourFlag = this.flags[team];
-    let yourFlagStatus: 'at_base' | 'carried' | 'unknown';
-    if (!yourFlag.carried) {
-      // Flag is at its base position
-      yourFlagStatus = 'at_base';
-    } else {
-      // Flag is being carried by an enemy
-      yourFlagStatus = 'carried';
+    // Determine your flag statuses (any flag carried = bad)
+    const yourFlags = this.flags[team];
+    let yourFlagStatus: 'at_base' | 'carried' | 'unknown' = 'at_base';
+    for (const f of yourFlags) {
+      if (f.carried) { yourFlagStatus = 'carried'; break; }
     }
 
-    // Determine enemy flag status
-    const enemyFlag = this.flags[enemyTeam];
-    let enemyFlagStatus: 'at_base' | 'carried_by_you' | 'carried_by_ally' | 'unknown';
-    if (enemyFlag.carried && enemyFlag.carrierId === agentId) {
-      enemyFlagStatus = 'carried_by_you';
-    } else if (enemyFlag.carried && enemyFlag.carrierId) {
-      const carrier = this.units.find((u) => u.id === enemyFlag.carrierId);
-      if (carrier && carrier.team === team) {
-        enemyFlagStatus = 'carried_by_ally';
-      } else {
-        enemyFlagStatus = 'unknown';
+    // Determine enemy flag status (best status across all enemy flags)
+    const enemyFlags = this.flags[enemyTeam];
+    let enemyFlagStatus: 'at_base' | 'carried_by_you' | 'carried_by_ally' | 'unknown' = 'unknown';
+    for (const ef of enemyFlags) {
+      if (ef.carried && ef.carrierId === agentId) {
+        enemyFlagStatus = 'carried_by_you';
+        break; // best possible
+      } else if (ef.carried && ef.carrierId) {
+        const carrier = this.units.find((u) => u.id === ef.carrierId);
+        if (carrier && carrier.team === team) {
+          enemyFlagStatus = 'carried_by_ally';
+        }
+      } else if (!ef.carried) {
+        const enemyFlagKey = hexToString(ef.position);
+        const isVisible = visibleTiles.some(
+          (t) => hexToString({ q: t.q, r: t.r }) === enemyFlagKey,
+        );
+        if (isVisible && enemyFlagStatus === 'unknown') {
+          enemyFlagStatus = 'at_base';
+        }
       }
-    } else if (!enemyFlag.carried) {
-      // Check if enemy flag hex is visible
-      const enemyFlagKey = hexToString(enemyFlag.position);
-      const isVisible = visibleTiles.some(
-        (t) => hexToString({ q: t.q, r: t.r }) === enemyFlagKey,
-      );
-      enemyFlagStatus = isVisible ? 'at_base' : 'unknown';
-    } else {
-      enemyFlagStatus = 'unknown';
     }
 
     // Get messages since last check
@@ -363,8 +368,9 @@ export class GameManager {
 
       // If unit is carrying a flag, update flag position too
       if (unit.carryingFlag) {
-        const carriedFlag = unit.team === 'A' ? this.flags.B : this.flags.A;
-        if (carriedFlag.carrierId === unit.id) {
+        const enemyTeam: 'A' | 'B' = unit.team === 'A' ? 'B' : 'A';
+        const carriedFlag = this.flags[enemyTeam].find(f => f.carrierId === unit.id);
+        if (carriedFlag) {
           carriedFlag.position = { ...result.to };
         }
       }
@@ -392,41 +398,50 @@ export class GameManager {
       // If carrying a flag, drop it back to its home base
       if (unit.carryingFlag) {
         unit.carryingFlag = false;
-        const droppedFlag = unit.team === 'A' ? this.flags.B : this.flags.A;
-        droppedFlag.carried = false;
-        droppedFlag.carrierId = undefined;
-        droppedFlag.position = { ...this.map.bases[droppedFlag.team].flag };
-        flagEvents.push(
-          `${unit.id} died carrying ${droppedFlag.team}'s flag — flag returned to base`,
-        );
+        const enemyTeam: 'A' | 'B' = unit.team === 'A' ? 'B' : 'A';
+        // Find which enemy flag this unit was carrying
+        const droppedFlag = this.flags[enemyTeam].find(f => f.carrierId === unit.id);
+        if (droppedFlag) {
+          droppedFlag.carried = false;
+          droppedFlag.carrierId = undefined;
+          // Return to the flag's original base position
+          const baseIdx = this.flags[enemyTeam].indexOf(droppedFlag);
+          droppedFlag.position = { ...this.map.bases[enemyTeam][baseIdx].flag };
+          flagEvents.push(
+            `${unit.id} died carrying ${enemyTeam}'s flag — flag returned to base`,
+          );
+        }
       }
     }
 
-    // 7. Check flag pickups
+    // 7. Check flag pickups (one flag per unit)
     for (const unit of this.units) {
-      if (!unit.alive) continue;
+      if (!unit.alive || unit.carryingFlag) continue;
 
       const enemyTeam: 'A' | 'B' = unit.team === 'A' ? 'B' : 'A';
-      const enemyFlag = this.flags[enemyTeam];
-
-      if (
-        !enemyFlag.carried &&
-        hexEquals(unit.position, enemyFlag.position)
-      ) {
-        enemyFlag.carried = true;
-        enemyFlag.carrierId = unit.id;
-        unit.carryingFlag = true;
-        flagEvents.push(`${unit.id} picked up ${enemyTeam}'s flag`);
+      for (const enemyFlag of this.flags[enemyTeam]) {
+        if (
+          !enemyFlag.carried &&
+          hexEquals(unit.position, enemyFlag.position)
+        ) {
+          enemyFlag.carried = true;
+          enemyFlag.carrierId = unit.id;
+          unit.carryingFlag = true;
+          flagEvents.push(`${unit.id} picked up ${enemyTeam}'s flag`);
+          break; // one flag per unit
+        }
       }
     }
 
-    // 8. Check win condition — carrier reaches own base flag hex
+    // 8. Check win condition — carrier reaches any of own base flag hexes
     let scored = false;
     for (const unit of this.units) {
       if (!unit.alive || !unit.carryingFlag) continue;
 
-      const homeBase = this.map.bases[unit.team].flag;
-      if (hexEquals(unit.position, homeBase)) {
+      // Check if at any of own team's base flag positions
+      const homeBases = this.map.bases[unit.team];
+      const atHome = homeBases.some(base => hexEquals(unit.position, base.flag));
+      if (atHome) {
         this.score[unit.team]++;
         flagEvents.push(
           `${unit.id} captured the flag! Team ${unit.team} scores!`,
@@ -434,10 +449,13 @@ export class GameManager {
 
         // Reset the captured flag
         const enemyTeam: 'A' | 'B' = unit.team === 'A' ? 'B' : 'A';
-        const capturedFlag = this.flags[enemyTeam];
-        capturedFlag.carried = false;
-        capturedFlag.carrierId = undefined;
-        capturedFlag.position = { ...this.map.bases[enemyTeam].flag };
+        const capturedFlag = this.flags[enemyTeam].find(f => f.carrierId === unit.id);
+        if (capturedFlag) {
+          const baseIdx = this.flags[enemyTeam].indexOf(capturedFlag);
+          capturedFlag.carried = false;
+          capturedFlag.carrierId = undefined;
+          capturedFlag.position = { ...this.map.bases[enemyTeam][baseIdx].flag };
+        }
         unit.carryingFlag = false;
 
         this.phase = 'finished';
@@ -448,14 +466,16 @@ export class GameManager {
     }
 
     // 9. Prepare for next turn
-    // Respawn dead units at team spawn hexes
+    // Respawn dead units at team spawn hexes (distribute across all bases)
     const spawnCountA = { current: 0 };
     const spawnCountB = { current: 0 };
+    const allSpawnsA = this.map.bases.A.flatMap(b => b.spawns);
+    const allSpawnsB = this.map.bases.B.flatMap(b => b.spawns);
 
     for (const unit of this.units) {
       if (unit.alive) continue;
 
-      const spawns = this.map.bases[unit.team].spawns;
+      const spawns = unit.team === 'A' ? allSpawnsA : allSpawnsB;
       const counter = unit.team === 'A' ? spawnCountA : spawnCountB;
       unit.position = { ...spawns[counter.current % spawns.length] };
       counter.current++;

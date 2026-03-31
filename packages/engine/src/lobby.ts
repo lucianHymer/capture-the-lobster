@@ -2,8 +2,8 @@
 // Manages team formation, pre-game class selection, and game creation
 
 import { UnitClass } from './movement.js';
-import { GameManager, GameConfig } from './game.js';
-import { generateMap } from './map.js';
+import { GameManager, GameConfig, getTurnLimitForRadius } from './game.js';
+import { generateMap, getMapRadiusForTeamSize } from './map.js';
 
 export interface LobbyAgent {
   id: string;
@@ -414,7 +414,8 @@ export class LobbyManager {
 
     this.phase = 'starting';
 
-    const map = generateMap({ seed: mapSeed ?? `game_${this.lobbyId}` });
+    const radius = getMapRadiusForTeamSize(this.teamSize);
+    const map = generateMap({ seed: mapSeed ?? `game_${this.lobbyId}`, radius, teamSize: this.teamSize });
 
     const players: { id: string; team: 'A' | 'B'; unitClass: UnitClass }[] =
       [];
@@ -439,6 +440,7 @@ export class LobbyManager {
 
     const config: GameConfig = {
       teamSize: Math.max(this.teamAIds.length, this.teamBIds.length),
+      turnLimit: getTurnLimitForRadius(radius),
     };
 
     return new GameManager(

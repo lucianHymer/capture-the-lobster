@@ -23,6 +23,8 @@ import {
   hexToString,
   CLASS_VISION,
   LobbyManager as EngineLobbyManager,
+  getMapRadiusForTeamSize,
+  getTurnLimitForRadius,
 } from '@lobster/engine';
 import { EloTracker } from './elo.js';
 import { runAllBotsTurn, createBotSessions, BotSession } from './claude-bot.js';
@@ -154,8 +156,10 @@ function buildSpectatorState(game: GameManager, handles: Record<string, string> 
 
   const flagsByHex = new Map<string, 'A' | 'B'>();
   for (const team of ['A', 'B'] as const) {
-    const f = flags[team];
-    flagsByHex.set(`${f.position.q},${f.position.r}`, team);
+    const teamFlags = flags[team];
+    for (const f of teamFlags) {
+      flagsByHex.set(`${f.position.q},${f.position.r}`, team);
+    }
   }
 
   for (const [key, tileType] of map.tiles) {
@@ -201,9 +205,12 @@ function buildSpectatorState(game: GameManager, handles: Record<string, string> 
   const kills = lastRecord?.kills ?? [];
 
   // Build flag status summaries
-  function flagStatus(f: FlagState): { status: 'at_base' | 'carried'; carrier?: string } {
-    if (f.carried && f.carrierId) {
-      return { status: 'carried', carrier: f.carrierId };
+  function flagStatus(flagArr: FlagState[]): { status: 'at_base' | 'carried'; carrier?: string } {
+    // Report 'carried' if any flag in the array is carried
+    for (const f of flagArr) {
+      if (f.carried && f.carrierId) {
+        return { status: 'carried', carrier: f.carrierId };
+      }
     }
     return { status: 'at_base' };
   }
@@ -407,6 +414,24 @@ export class GameServer {
         }
         return { success: true };
       },
+      // Create lobby callback: create a new lobby and auto-join the agent
+      (agentId: string, name: string, teamSize: number) => {
+        if (this.activeGameCount() >= this.maxConcurrentGames) {
+          return { success: false, error: 'Server busy — a lobby or game is already running.' };
+        }
+        const size = Math.min(6, Math.max(2, Math.floor(teamSize)));
+        const { lobbyId } = this.createLobbyGame(size, 600000);
+        const lobbyRoom = this.lobbies.get(lobbyId)!;
+        // Auto-join the creator
+        lobbyRoom.externalSlots.set(agentId, { token: '', agentId, connected: true });
+        this.agentToLobby.set(agentId, lobbyId);
+        if (lobbyRoom.lobbyManager) {
+          lobbyRoom.lobbyManager.addAgent({ id: agentId, handle: name, elo: 1000 });
+        }
+        lobbyRoom.runner.emitState();
+        console.log(`[MCP] Agent ${agentId} (${name}) created and joined lobby ${lobbyId} (${size}v${size})`);
+        return { success: true, lobbyId };
+      },
       // Leaderboard resolver
       (limit: number, offset: number) => {
         const players = this.elo.getLeaderboard(limit, offset);
@@ -515,7 +540,7 @@ export class GameServer {
       if (this.activeGameCount() >= this.maxConcurrentGames) {
         return res.status(429).json({ error: 'Server busy — a lobby or game is already running. Wait for it to finish.' });
       }
-      const teamSize = (req.body?.teamSize as number) || 2;
+      const teamSize = Math.min(6, Math.max(2, Math.floor((req.body?.teamSize as number) || 2)));
       const timeoutMs = (req.body?.timeoutMs as number) || 600000;
       const { lobbyId } = this.createLobbyGame(teamSize, timeoutMs);
       res.status(201).json({ lobbyId });
@@ -526,7 +551,7 @@ export class GameServer {
       if (this.activeGameCount() >= this.maxConcurrentGames) {
         return res.status(429).json({ error: 'Server busy — a lobby or game is already running. Wait for it to finish.' });
       }
-      const teamSize = (req.body?.teamSize as number) || 2;
+      const teamSize = Math.min(6, Math.max(2, Math.floor((req.body?.teamSize as number) || 2)));
       const timeoutMs = (req.body?.timeoutMs as number) || 600000;
       const { lobbyId } = this.createLobbyGame(teamSize, timeoutMs);
       res.status(201).json({ lobbyId, teamSize });
@@ -591,7 +616,9 @@ export class GameServer {
       const list = Array.from(this.games.entries()).map(([id, room]) => ({
         id,
         turn: room.game.turn,
+        maxTurns: room.game.config.turnLimit,
         phase: room.game.phase,
+        winner: room.game.winner,
         teams: {
           A: room.game.units.filter((u) => u.team === 'A').map((u) => u.id),
           B: room.game.units.filter((u) => u.team === 'B').map((u) => u.id),
@@ -811,8 +838,12 @@ export class GameServer {
       });
     }
 
-    const gameMap = generateMap({ radius: 5 });
-    const game = new GameManager(gameId, gameMap, players);
+    const radius = getMapRadiusForTeamSize(teamSize);
+    const gameMap = generateMap({ radius, teamSize });
+    const game = new GameManager(gameId, gameMap, players, {
+      teamSize,
+      turnLimit: getTurnLimitForRadius(radius),
+    });
 
     // Take initial snapshot
     const initialState = buildSpectatorState(game, handleMap);
@@ -1144,8 +1175,16 @@ export class GameServer {
       }
     }
 
-    const gameMap = generateMap({ radius: 5 });
-    const game = new GameManager(gameId, gameMap, players);
+    const teamSize = Math.max(
+      players.filter(p => p.team === 'A').length,
+      players.filter(p => p.team === 'B').length,
+    );
+    const radius = getMapRadiusForTeamSize(teamSize);
+    const gameMap = generateMap({ radius, teamSize });
+    const game = new GameManager(gameId, gameMap, players, {
+      teamSize,
+      turnLimit: getTurnLimitForRadius(radius),
+    });
 
     const initialState = buildSpectatorState(game, handleMap);
 

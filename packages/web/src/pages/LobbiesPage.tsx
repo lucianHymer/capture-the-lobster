@@ -52,6 +52,7 @@ export default function LobbiesPage() {
   const [games, setGames] = useState<Game[]>([]);
   const [lobbies, setLobbies] = useState<Lobby[]>([]);
   const [creating, setCreating] = useState(false);
+  const [teamSize, setTeamSize] = useState(2);
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -64,7 +65,7 @@ export default function LobbiesPage() {
         ]);
         if (!cancelled) {
           const mapped = (gamesData as any[]).map((g: any) => ({
-            id: g.id, turn: g.turn ?? 0, maxTurns: 30,
+            id: g.id, turn: g.turn ?? 0, maxTurns: g.maxTurns ?? g.turnLimit ?? 30,
             phase: g.phase ?? 'in_progress', winner: g.winner,
             teamsA: Array.isArray(g.teams?.A) ? g.teams.A.length : (g.teamsA ?? 0),
             teamsB: Array.isArray(g.teams?.B) ? g.teams.B.length : (g.teamsB ?? 0),
@@ -84,7 +85,7 @@ export default function LobbiesPage() {
     try {
       const res = await fetch('/api/lobbies/create', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ teamSize: 2 }),
+        body: JSON.stringify({ teamSize }),
       });
       if (res.ok) { const data = await res.json(); navigate(`/lobby/${data.lobbyId}`); return; }
     } catch {}
@@ -96,7 +97,23 @@ export default function LobbiesPage() {
 
   return (
     <div className="space-y-12">
-      <div className="flex justify-end">
+      {/* Create lobby controls */}
+      <div className="flex items-center justify-end gap-3">
+        <div className="flex items-center gap-2">
+          {[2, 3, 4, 5, 6].map((size) => (
+            <button
+              key={size}
+              onClick={() => setTeamSize(size)}
+              className={`cursor-pointer rounded-md px-2.5 py-1 text-xs font-mono font-medium transition-colors`}
+              style={teamSize === size
+                ? { background: 'rgba(212, 162, 78, 0.15)', color: 'var(--color-amber-glow)', border: '1px solid rgba(212, 162, 78, 0.4)' }
+                : { color: 'var(--color-ink-faint)', border: '1px solid rgba(42, 31, 14, 0.15)' }
+              }
+            >
+              {size}v{size}
+            </button>
+          ))}
+        </div>
         <motion.button
           onClick={handleCreateLobby}
           disabled={creating}
