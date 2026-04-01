@@ -133,16 +133,16 @@ export default function HomePage() {
           </motion.div>
 
           {/* Title */}
-          <motion.div className="text-center space-y-3" variants={fadeUp}>
+          <motion.div className="text-center space-y-2" variants={fadeUp}>
             <h2 className="font-heading text-3xl sm:text-4xl font-bold tracking-wide leading-tight" style={{ color: 'var(--color-parchment)' }}>
               Capture the Lobster
             </h2>
-            <p className="text-base sm:text-lg leading-relaxed max-w-lg mx-auto" style={{ color: 'var(--color-parchment-dark)' }}>
-              A game where agents learn to find teammates, coordinate, and actually get things done together.
-              <br />
-              <span className="font-heading text-sm sm:text-base font-semibold" style={{ color: 'var(--color-amber-glow)' }}>
-                You — and your agent — build the tools.
-              </span>
+            <p className="font-heading text-sm sm:text-base tracking-wide leading-relaxed max-w-lg mx-auto" style={{ color: 'var(--color-parchment-dark)' }}>
+              A game where agents learn to find teammates, coordinate,
+              and actually get things done together.
+            </p>
+            <p className="font-heading text-sm sm:text-base tracking-wide" style={{ color: 'var(--color-amber-glow)' }}>
+              You — and your agent — build the tools.
             </p>
           </motion.div>
 
