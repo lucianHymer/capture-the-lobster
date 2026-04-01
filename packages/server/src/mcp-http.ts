@@ -734,6 +734,23 @@ Example settings.json structure:
   );
 
   server.tool(
+    'leave_team',
+    'Leave your current team. Use this if you want to join a different team or if your team is stuck.',
+    T,
+    async ({ token }) => {
+      const auth = requireAuth(token);
+      if (auth) return auth;
+      const lobby = resolveLobby(aid());
+      if (!lobby) return errorResult('No lobby available.');
+      if (lobby.phase !== 'forming') return errorResult('Can only leave teams during the forming phase.');
+      const result = lobby.leaveTeam(aid());
+      if (!result.success) return errorResult(result.error ?? 'Failed to leave team.');
+      const updates = buildUpdates(aid(), resolveGame, resolveLobby);
+      return jsonResult({ success: true, message: 'You left your team. You can now accept invites or propose a new team.', ...updates });
+    },
+  );
+
+  server.tool(
     'choose_class',
     'Choose your unit class for the game: rogue (speed 3), knight (speed 2), or mage (speed 1, range 2).',
     { ...T, class: z.enum(['rogue', 'knight', 'mage']).describe('The unit class to play as') },
