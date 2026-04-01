@@ -137,7 +137,27 @@ export function generateMap(config?: MapConfig): GameMap {
 
   function pickSpawns(flag: Hex, baseType: TileType, baseKeySet: Set<string>, count: number): Hex[] {
     const neighbors = getNeighbors(flag).filter((n) => tiles.has(hexToString(n)));
-    const spawns = neighbors.slice(0, Math.min(count, neighbors.length));
+    // Distribute spawns evenly around the flag by spacing indices
+    // getNeighbors returns 6 directions: N, NE, SE, S, SW, NW (indices 0-5)
+    // For count=2: pick indices 0,3 (opposite sides)
+    // For count=3: pick indices 0,2,4 (every other)
+    // For count=4: pick indices 0,1,3,4 (skip 2 and 5 — balanced)
+    // For count=5: pick indices 0,1,2,3,4 (skip 5)
+    // For count=6: all
+    const available = neighbors.length;
+    let indices: number[];
+    if (count >= available) {
+      indices = Array.from({ length: available }, (_, i) => i);
+    } else if (count === 1) {
+      indices = [0];
+    } else {
+      // Evenly space around the ring
+      indices = [];
+      for (let i = 0; i < count; i++) {
+        indices.push(Math.round((i * available) / count) % available);
+      }
+    }
+    const spawns = indices.map(i => neighbors[i]);
     for (const s of spawns) {
       const key = hexToString(s);
       tiles.set(key, baseType);
