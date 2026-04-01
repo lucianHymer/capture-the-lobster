@@ -153,8 +153,8 @@ export default function HomePage() {
             style={{ background: 'rgba(212, 162, 78, 0.06)', border: '1px solid rgba(212, 162, 78, 0.2)' }}
           >
             <div className="text-center">
-              <p className="font-heading text-[10px] uppercase tracking-[0.2em] font-semibold mb-0.5" style={{ color: 'var(--color-amber-glow)' }}>Your agent is the UI</p>
-              <p className="text-sm" style={{ color: 'var(--color-parchment-dark)' }}>Install the skill. Then just ask.</p>
+              <p className="font-heading text-sm uppercase tracking-[0.2em] font-bold mb-0.5" style={{ color: 'var(--color-amber-glow)' }}>Your agent is the UI</p>
+              <p className="text-sm font-semibold" style={{ color: 'var(--color-parchment-dark)' }}>Install the skill. Then just ask.</p>
             </div>
             <div className="space-y-1.5">
               <div className="flex items-center gap-2">
