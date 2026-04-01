@@ -164,6 +164,7 @@ export default function LobbyPage() {
   const [state, setState] = useState<LobbyState | null>(null);
   const [connected, setConnected] = useState(false);
   const [addingBot, setAddingBot] = useState(false);
+  const [adminPassword, setAdminPassword] = useState('');
   const [copied, setCopied] = useState(false);
   const [noTimeout, setNoTimeout] = useState(false);
   const [lobbyTimer, setLobbyTimer] = useState<number | null>(null);
@@ -231,11 +232,10 @@ export default function LobbyPage() {
     if (!hasExternalAgents) {
       if (!confirm('Are you sure? No agents have joined yet.')) return;
     }
-    const password = prompt('Admin password (bots use API credits):');
-    if (!password) return;
+    if (!adminPassword) { alert('Enter admin password first'); return; }
     setAddingBot(true);
     try {
-      const r = await fetch(`/api/lobbies/${id}/fill-bots`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password }) });
+      const r = await fetch(`/api/lobbies/${id}/fill-bots`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password: adminPassword }) });
       if (!r.ok) { const d = await r.json().catch(() => ({})); alert(d.error || 'Failed to fill bots'); }
     } catch {}
     setAddingBot(false);
@@ -331,12 +331,19 @@ export default function LobbyPage() {
 
           {/* Dev bots panel */}
           <div className="rounded-lg p-3 flex items-center gap-3" style={{ background: 'rgba(42, 31, 14, 0.03)', border: '1px dashed rgba(42, 31, 14, 0.12)' }}>
-            <button onClick={handleFillBots} disabled={addingBot || state.agents.length >= (state.teamSize || 2) * 2}
+            <input
+              type="password"
+              placeholder="Admin password"
+              value={adminPassword}
+              onChange={(e) => setAdminPassword(e.target.value)}
+              className="rounded px-3 py-1.5 text-xs font-mono w-36"
+              style={{ background: 'rgba(42, 31, 14, 0.04)', border: '1px solid rgba(42, 31, 14, 0.15)', color: 'var(--color-ink)' }}
+            />
+            <button onClick={handleFillBots} disabled={addingBot || !adminPassword || state.agents.length >= (state.teamSize || 2) * 2}
               className="cursor-pointer font-heading rounded px-4 py-1.5 text-xs font-medium transition-all hover:brightness-110 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
               style={{ background: 'var(--color-wood)', color: 'var(--color-parchment)', border: '1px solid var(--color-wood-light)' }}>
-              {addingBot ? 'Filling...' : `Fill remaining with bots`}
+              {addingBot ? 'Filling...' : `Fill with bots`}
             </button>
-            <span className="text-xs" style={{ color: 'var(--color-ink-faint)' }}>Server-side test bots for development</span>
           </div>
         </div>
       )}
