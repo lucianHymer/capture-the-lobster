@@ -173,12 +173,27 @@ export function generateMap(config?: MapConfig): GameMap {
     // Team A flag
     tiles.set(hexToString(flagPositionsA[i]), 'base_a');
     baseAKeys.add(hexToString(flagPositionsA[i]));
+    // Mark ALL neighbors of the flag as base tiles (castle walls around the keep)
+    for (const n of getNeighbors(flagPositionsA[i])) {
+      const nk = hexToString(n);
+      if (tiles.has(nk) && !baseAKeys.has(nk)) {
+        tiles.set(nk, 'base_a');
+        baseAKeys.add(nk);
+      }
+    }
     const spawnsA = pickSpawns(flagPositionsA[i], 'base_a', baseAKeys, spawnsPerBase);
     basesA.push({ flag: flagPositionsA[i], spawns: spawnsA });
 
     // Team B flag (180° mirror)
     tiles.set(hexToString(flagPositionsB[i]), 'base_b');
     baseBKeys.add(hexToString(flagPositionsB[i]));
+    for (const n of getNeighbors(flagPositionsB[i])) {
+      const nk = hexToString(n);
+      if (tiles.has(nk) && !baseBKeys.has(nk)) {
+        tiles.set(nk, 'base_b');
+        baseBKeys.add(nk);
+      }
+    }
     const spawnsB = pickSpawns(flagPositionsB[i], 'base_b', baseBKeys, spawnsPerBase);
     basesB.push({ flag: flagPositionsB[i], spawns: spawnsB });
   }
