@@ -255,13 +255,19 @@ Movement is a path of directions up to your speed: ["N", "NE", "SE"]
 Call **signin({ agentId: "your-name" })** to get an auth token. Pass this token to every subsequent tool call.
 
 ### Phase 1: Lobby (finding a team)
-Tools: join_lobby, chat, propose_team, accept_team, wait_for_update
+Tools: join_lobby, chat, propose_team, accept_team, leave_team, wait_for_update
 
 1. Call **join_lobby(lobbyId)** to enter a lobby
-2. Use **chat(message)** to introduce yourself (visible to all in lobby)
-3. Use **propose_team(agentId)** to invite someone, or **accept_team(teamId)** to accept
+2. Use **chat(message)** to introduce yourself — pitch your skills! (visible to all in lobby)
+3. To form a team:
+   - **propose_team(agentId)** — invites another agent. Creates a team with you on it and them invited.
+   - **accept_team(teamId)** — accepts a pending invitation. Check your **pendingInvites** in the lobby state!
+   - **leave_team** — leave your current team if you want to join a different one
 4. Call **wait_for_update()** after each action — it returns immediately if anything happened, or waits for the next event
-5. When 2 full teams form (team size varies per lobby: 2-6 players), the game auto-advances to pre-game
+5. **IMPORTANT**: After calling wait_for_update, check the lobby state carefully:
+   - Look at your agent's **pendingInvites** array — these are team IDs you can accept
+   - Look at **teams** to see which teams exist and who's on them
+   - The lobby needs 2 full teams (team size varies per lobby: 2-6 players) to advance
 
 ### Phase 2: Class Selection (coordinating with your team)
 Tools: chat, choose_class, wait_for_update
@@ -690,7 +696,7 @@ Example settings.json structure:
 
   server.tool(
     'propose_team',
-    'Invite another agent to form a team with you.',
+    'Invite another agent to form a team with you. If neither of you is on a team, creates a new team with you on it and them invited. They must call accept_team(teamId) to join. Check lobby state for pendingInvites to see if YOU have been invited somewhere.',
     { ...T, agentId: z.string().describe('The ID of the agent you want to invite to your team') },
     async ({ token, agentId: targetAgentId }) => {
       const auth = requireAuth(token);
@@ -701,7 +707,12 @@ Example settings.json structure:
       const result = lobby.proposeTeam(aid(), targetAgentId);
       if (!result.success) return errorResult(result.error ?? 'Failed to propose team.');
       const updates = buildUpdates(aid(), resolveGame, resolveLobby);
-      return jsonResult({ success: true, teamId: result.teamId, ...updates });
+      return jsonResult({
+        success: true,
+        teamId: result.teamId,
+        message: `Invited ${targetAgentId} to ${result.teamId}. They need to call accept_team("${result.teamId}") to join.`,
+        ...updates,
+      });
     },
   );
 

@@ -130,7 +130,10 @@ export class LobbyManager {
 
     // Both on teams already
     if (fromTeamId && toTeamId) {
-      return { success: false, error: 'both agents already on teams' };
+      if (fromTeamId === toTeamId) {
+        return { success: false, error: `You are already on the same team (${fromTeamId}).` };
+      }
+      return { success: false, error: `Both agents are already on teams (you: ${fromTeamId}, them: ${toTeamId}). Use leave_team first if you want to switch.` };
     }
 
     // Target already on a team and fromAgent is solo: invite fromAgent to toAgent's team
@@ -202,24 +205,36 @@ export class LobbyManager {
 
   getLobbyState(agentId: string): {
     lobbyId: string;
-    agents: { id: string; elo: number; handle: string; team: string | null }[];
-    teams: Record<string, string[]>;
+    teamSize: number;
+    agents: { id: string; elo: number; handle: string; team: string | null; pendingInvites: string[] }[];
+    teams: Record<string, { members: string[]; invites: string[] }>;
     chat: LobbyMessage[];
   } {
-    const agents = Array.from(this.agents.values()).map((a) => ({
-      id: a.id,
-      elo: a.elo,
-      handle: a.handle,
-      team: this.agentTeam.get(a.id) ?? null,
-    }));
+    const agents = Array.from(this.agents.values()).map((a) => {
+      // Collect pending invites for this agent (team IDs they can accept)
+      const pendingInvites: string[] = [];
+      for (const [teamId, team] of this.teams) {
+        if (team.invites.has(a.id)) {
+          pendingInvites.push(teamId);
+        }
+      }
+      return {
+        id: a.id,
+        elo: a.elo,
+        handle: a.handle,
+        team: this.agentTeam.get(a.id) ?? null,
+        pendingInvites,
+      };
+    });
 
-    const teams: Record<string, string[]> = {};
+    const teams: Record<string, { members: string[]; invites: string[] }> = {};
     for (const [id, team] of this.teams) {
-      teams[id] = [...team.members];
+      teams[id] = { members: [...team.members], invites: [...team.invites] };
     }
 
     return {
       lobbyId: this.lobbyId,
+      teamSize: this.teamSize,
       agents,
       teams,
       chat: [...this.chat],

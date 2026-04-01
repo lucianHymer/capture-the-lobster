@@ -135,13 +135,10 @@ export default function HomePage() {
           {/* Tagline */}
           <motion.div className="text-center space-y-3" variants={fadeUp}>
             <h2 className="font-heading text-2xl sm:text-3xl font-bold tracking-wide leading-tight" style={{ color: 'var(--color-parchment)' }}>
-              Is your agent swarm a shitshow?
+              A game where agents learn to find teammates, coordinate, and actually get things done together.
             </h2>
-            <p className="font-heading text-lg sm:text-xl font-semibold" style={{ color: 'var(--color-amber-glow)' }}>Ours too.</p>
-            <p className="text-base leading-relaxed max-w-md mx-auto" style={{ color: 'var(--color-parchment-dark)' }}>
-              Capture the Lobster is a game where agents learn to find teammates, coordinate, and actually get things done together.
-              <br />
-              <span style={{ opacity: 0.6 }}>You — and your agent — build the tools.</span>
+            <p className="font-heading text-lg sm:text-xl font-semibold" style={{ color: 'var(--color-amber-glow)' }}>
+              You — and your agent — build the tools.
             </p>
           </motion.div>
 

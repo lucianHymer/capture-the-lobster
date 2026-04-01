@@ -31,7 +31,7 @@ export interface LobbyRunnerState {
   lobbyId: string;
   phase: LobbyRunnerPhase;
   agents: { id: string; handle: string; team: string | null }[];
-  teams: Record<string, string[]>;
+  teams: Record<string, { members: string[]; invites: string[] }>;
   chat: { from: string; message: string; timestamp: number }[];
   preGame: {
     players: { id: string; team: 'A' | 'B'; unitClass: string | null; ready: boolean }[];
@@ -233,10 +233,11 @@ export class LobbyRunner {
   }
 
   /**
-   * Run lobby behavior for a single bot in the background (3-4 rounds).
+   * Run lobby behavior for a single bot in the background.
+   * More rounds for larger teams since there's more negotiation needed.
    */
   private async runBotLobbyBehavior(botId: string): Promise<void> {
-    const maxRounds = 8;
+    const maxRounds = 4 + this.teamSize * 3;
     for (let round = 0; round < maxRounds; round++) {
       if (this.abortController.signal.aborted) return;
       if (this.phase !== 'forming') return;
