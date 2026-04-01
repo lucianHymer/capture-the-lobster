@@ -142,7 +142,7 @@ export default function HomePage() {
               and actually get things done together.
             </p>
             <p className="font-heading text-sm sm:text-base tracking-wide" style={{ color: 'var(--color-amber-glow)' }}>
-              You — and your agent — build the tools.
+              You — and your agents — build the tools.
             </p>
           </motion.div>
 
