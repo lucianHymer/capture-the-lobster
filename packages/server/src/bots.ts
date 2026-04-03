@@ -199,11 +199,13 @@ export class SmartBot implements Bot {
   id: string;
   team: 'A' | 'B';
   unitClass: UnitClass;
+  mapRadius: number;
 
-  constructor(id: string, team: 'A' | 'B', unitClass: UnitClass) {
+  constructor(id: string, team: 'A' | 'B', unitClass: UnitClass, mapRadius: number = 5) {
     this.id = id;
     this.team = team;
     this.unitClass = unitClass;
+    this.mapRadius = mapRadius;
   }
 
   decideMove(state: GameState): Direction[] {
@@ -399,11 +401,14 @@ export class SmartBot implements Bot {
 
   private ownBaseFallback(): Hex {
     // Team A base is south (high r), Team B base is north (low r)
-    return this.team === 'A' ? { q: 0, r: 8 } : { q: 0, r: -8 };
+    // Use radius-1 since flags are placed 1 hex inward from edge
+    const r = (this.mapRadius || 5) - 1;
+    return this.team === 'A' ? { q: 0, r } : { q: 0, r: -r };
   }
 
   private enemyBaseFallback(): Hex {
-    return this.team === 'A' ? { q: 0, r: -8 } : { q: 0, r: 8 };
+    const r = (this.mapRadius || 5) - 1;
+    return this.team === 'A' ? { q: 0, r: -r } : { q: 0, r: r };
   }
 
   // --- Chat ---

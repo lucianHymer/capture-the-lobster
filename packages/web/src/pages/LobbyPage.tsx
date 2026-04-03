@@ -28,14 +28,18 @@ function AgentCard({ agent }: { agent: LobbyAgent }) {
   );
 }
 
-function TeamPanel({ teamId, members, agents }: { teamId: string; members: string[]; agents: LobbyAgent[]; }) {
+function TeamPanel({ teamId, team, agents }: { teamId: string; team: { members: string[]; invites: string[] }; agents: LobbyAgent[]; }) {
   return (
     <div className="rounded-lg parchment-strong p-3">
       <h4 className="mb-2 text-sm font-heading font-semibold" style={{ color: 'var(--color-amber)' }}>{teamId}</h4>
       <div className="flex flex-wrap gap-2">
-        {members.map((id) => {
+        {team.members.map((id) => {
           const agent = agents.find((a) => a.id === id);
           return <span key={id} className="rounded px-2 py-1 text-xs font-mono" style={{ background: 'rgba(42, 31, 14, 0.06)', color: 'var(--color-ink-light)' }}>{agent?.handle ?? id}</span>;
+        })}
+        {team.invites.map((id) => {
+          const agent = agents.find((a) => a.id === id);
+          return <span key={id} className="rounded px-2 py-1 text-xs font-mono italic" style={{ background: 'rgba(184, 134, 11, 0.06)', color: 'var(--color-amber-dim)', borderStyle: 'dashed', border: '1px dashed rgba(184, 134, 11, 0.3)' }}>{agent?.handle ?? id} (invited)</span>;
         })}
       </div>
     </div>
@@ -160,6 +164,7 @@ export default function LobbyPage() {
   const [state, setState] = useState<LobbyState | null>(null);
   const [connected, setConnected] = useState(false);
   const [addingBot, setAddingBot] = useState(false);
+  const [adminPassword, setAdminPassword] = useState('');
   const [copied, setCopied] = useState(false);
   const [noTimeout, setNoTimeout] = useState(false);
   const [lobbyTimer, setLobbyTimer] = useState<number | null>(null);
@@ -223,15 +228,14 @@ export default function LobbyPage() {
   async function handleFillBots() {
     if (!id) return;
     // Warn if no external agents have joined yet
-    const hasExternalAgents = state.agents.some((a: any) => a.id?.startsWith('ext_'));
+    const hasExternalAgents = state?.agents.some((a: any) => a.id?.startsWith('ext_'));
     if (!hasExternalAgents) {
       if (!confirm('Are you sure? No agents have joined yet.')) return;
     }
-    const password = prompt('Admin password (bots use API credits):');
-    if (!password) return;
+    if (!adminPassword) { alert('Enter admin password first'); return; }
     setAddingBot(true);
     try {
-      const r = await fetch(`/api/lobbies/${id}/fill-bots`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password }) });
+      const r = await fetch(`/api/lobbies/${id}/fill-bots`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password: adminPassword }) });
       if (!r.ok) { const d = await r.json().catch(() => ({})); alert(d.error || 'Failed to fill bots'); }
     } catch {}
     setAddingBot(false);
@@ -327,12 +331,19 @@ export default function LobbyPage() {
 
           {/* Dev bots panel */}
           <div className="rounded-lg p-3 flex items-center gap-3" style={{ background: 'rgba(42, 31, 14, 0.03)', border: '1px dashed rgba(42, 31, 14, 0.12)' }}>
-            <button onClick={handleFillBots} disabled={addingBot || state.agents.length >= (state.teamSize || 2) * 2}
+            <input
+              type="password"
+              placeholder="Admin password"
+              value={adminPassword}
+              onChange={(e) => setAdminPassword(e.target.value)}
+              className="rounded px-3 py-1.5 text-xs font-mono w-36"
+              style={{ background: 'rgba(42, 31, 14, 0.04)', border: '1px solid rgba(42, 31, 14, 0.15)', color: 'var(--color-ink)' }}
+            />
+            <button onClick={handleFillBots} disabled={addingBot || !adminPassword || state.agents.length >= (state.teamSize || 2) * 2}
               className="cursor-pointer font-heading rounded px-4 py-1.5 text-xs font-medium transition-all hover:brightness-110 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
               style={{ background: 'var(--color-wood)', color: 'var(--color-parchment)', border: '1px solid var(--color-wood-light)' }}>
-              {addingBot ? 'Filling...' : `Fill remaining with bots`}
+              {addingBot ? 'Filling...' : `Fill with bots`}
             </button>
-            <span className="text-xs" style={{ color: 'var(--color-ink-faint)' }}>Server-side test bots for development</span>
           </div>
         </div>
       )}
@@ -372,7 +383,7 @@ export default function LobbyPage() {
             <h3 className="mb-3 font-heading text-sm font-semibold uppercase tracking-wider" style={{ color: 'var(--color-ink-faint)' }}>Teams ({teamEntries.length})</h3>
             {teamEntries.length === 0
               ? <p className="text-sm" style={{ color: 'var(--color-ink-faint)' }}>No teams formed yet...</p>
-              : <div className="space-y-2">{teamEntries.map(([tid, m]) => <TeamPanel key={tid} teamId={tid} members={m} agents={state.agents} />)}</div>
+              : <div className="space-y-2">{teamEntries.map(([tid, t]) => <TeamPanel key={tid} teamId={tid} team={t as any} agents={state.agents} />)}</div>
             }
           </div>
         </div>

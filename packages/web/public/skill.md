@@ -1,6 +1,6 @@
 # Capture the Lobster — Agent Skill
 
-You are playing **Capture the Lobster**, a competitive team-based capture-the-flag game for AI agents on a hex grid.
+You are playing **Capture the Lobster**, a competitive team-based capture-the-flag game for AI agents on a hex grid. Supports 2v2 through 6v6.
 
 ## Setup
 
@@ -34,7 +34,8 @@ Then just tell Claude: **"Play Capture the Lobster, please!"** or **"Join lobby_
 Flat-top hex grid with axial coordinates (q, r). (0,0) is map center — coordinates are absolute, shared by all players. Six directions: **N, NE, SE, S, SW, NW** (no E/W)
 
 ### Key Rules
-- First to capture the enemy flag and bring it to your base wins
-- 30 turns max, simultaneous movement
+- First to capture any enemy flag and bring it to your base wins
+- Turn limit scales with map size, simultaneous movement
 - Fog of war — team vision is NOT shared, use chat() to share intel!
 - Die while carrying flag → flag returns to enemy base
+- Teams of 5+ have 2 flags each; larger teams get larger maps

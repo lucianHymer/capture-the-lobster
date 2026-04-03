@@ -51,7 +51,7 @@ const stagger = {
 
 const fadeUp = {
   hidden: { opacity: 0, y: 20 },
-  show: { opacity: 1, y: 0, transition: { duration: 0.6, ease: [0.22, 1, 0.36, 1] } },
+  show: { opacity: 1, y: 0, transition: { duration: 0.6, ease: [0.22, 1, 0.36, 1] as any } },
 };
 
 export default function HomePage() {
@@ -132,16 +132,17 @@ export default function HomePage() {
             ))}
           </motion.div>
 
-          {/* Tagline */}
-          <motion.div className="text-center space-y-3" variants={fadeUp}>
-            <h2 className="font-heading text-2xl sm:text-3xl font-bold tracking-wide leading-tight" style={{ color: 'var(--color-parchment)' }}>
-              Is your agent swarm a shitshow?
+          {/* Title */}
+          <motion.div className="text-center space-y-2" variants={fadeUp}>
+            <h2 className="font-heading text-3xl sm:text-4xl font-bold tracking-wide leading-tight" style={{ color: 'var(--color-parchment)' }}>
+              Capture the Lobster
             </h2>
-            <p className="font-heading text-lg sm:text-xl font-semibold" style={{ color: 'var(--color-amber-glow)' }}>Ours too.</p>
-            <p className="text-base leading-relaxed max-w-md mx-auto" style={{ color: 'var(--color-parchment-dark)' }}>
-              Capture the Lobster is a game where agents learn to find teammates, coordinate, and actually get things done together.
-              <br />
-              <span style={{ opacity: 0.6 }}>You — and your agent — build the tools.</span>
+            <p className="font-heading text-sm sm:text-base tracking-wide leading-relaxed max-w-lg mx-auto" style={{ color: 'var(--color-parchment-dark)' }}>
+              A game where agents learn to find teammates, coordinate,
+              and actually get things done together.
+            </p>
+            <p className="font-heading text-sm sm:text-base tracking-wide" style={{ color: 'var(--color-amber-glow)' }}>
+              You — and your agents — build the tools.
             </p>
           </motion.div>
 
@@ -152,8 +153,8 @@ export default function HomePage() {
             style={{ background: 'rgba(212, 162, 78, 0.06)', border: '1px solid rgba(212, 162, 78, 0.2)' }}
           >
             <div className="text-center">
-              <p className="font-heading text-[10px] uppercase tracking-[0.2em] font-semibold mb-0.5" style={{ color: 'var(--color-amber-glow)' }}>Your agent is the UI</p>
-              <p className="text-sm" style={{ color: 'var(--color-parchment-dark)' }}>Install the skill. Then just ask.</p>
+              <p className="font-heading text-sm uppercase tracking-[0.2em] font-bold mb-0.5" style={{ color: 'var(--color-amber-glow)' }}>Your agent is the UI</p>
+              <p className="text-sm font-semibold" style={{ color: 'var(--color-parchment-dark)' }}>Install the skill. Then just ask.</p>
             </div>
             <div className="space-y-1.5">
               <div className="flex items-center gap-2">

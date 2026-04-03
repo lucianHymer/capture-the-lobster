@@ -13,12 +13,17 @@ import {
 
 export type TileType = 'ground' | 'wall' | 'base_a' | 'base_b';
 
+export interface BaseLocation {
+  flag: Hex;
+  spawns: Hex[];
+}
+
 export interface GameMap {
   tiles: Map<string, TileType>;
   radius: number;
   bases: {
-    A: { flag: Hex; spawns: Hex[] };
-    B: { flag: Hex; spawns: Hex[] };
+    A: BaseLocation[];
+    B: BaseLocation[];
   };
 }
 
@@ -26,6 +31,20 @@ export interface MapConfig {
   radius?: number;
   wallDensity?: number;
   seed?: string;
+  teamSize?: number;
+}
+
+// --- Team size scaling ---
+
+/** Map radius (internal, before border ring) for a given team size */
+export function getMapRadiusForTeamSize(teamSize: number): number {
+  const table: Record<number, number> = { 2: 5, 3: 6, 4: 7, 5: 8, 6: 9 };
+  return table[teamSize] ?? Math.max(5, teamSize + 3);
+}
+
+/** Number of flags per team for a given team size */
+export function getFlagCountForTeamSize(teamSize: number): number {
+  return teamSize >= 5 ? 2 : 1;
 }
 
 // --- Seeded PRNG (mulberry32) ---
@@ -94,28 +113,51 @@ export function generateMap(config?: MapConfig): GameMap {
   }
   const allKeys = new Set(tiles.keys());
 
-  // 2. Place bases on opposite sides (A = south / high r, B = north / low r)
-  // Find the hex with the highest r that's within the map
-  // For a flat-top hex grid, the southernmost hex at q=0 is (0, radius)
-  const flagA: Hex = { q: 0, r: radius };
-  const flagB: Hex = rotate180(flagA); // (0, -radius)
+  // 2. Place bases — flags inward by 1 hex so all 6 neighbors are in bounds
+  const teamSize = config?.teamSize ?? 2;
+  const flagCount = getFlagCountForTeamSize(teamSize);
+  // Spawns per base = ceil(teamSize / flagCount) so all players can spawn
+  const spawnsPerBase = Math.ceil(teamSize / flagCount);
+
+  // Base positions: first pair on north/south axis, second pair (if needed) on diagonal
+  const flagPositionsA: Hex[] = [{ q: 0, r: radius - 1 }];
+  const flagPositionsB: Hex[] = [rotate180(flagPositionsA[0])];
+
+  if (flagCount >= 2) {
+    // Second flag pair on the NE/SW axis (60° rotation of the first)
+    // Hex 60° rotation: (q,r) -> (-r, q+r)
+    const rotated = { q: -(radius - 1), r: radius - 1 };
+    flagPositionsA.push(rotated);
+    flagPositionsB.push(rotate180(rotated));
+  }
 
   // Mark base tiles and find spawns
   const baseAKeys = new Set<string>();
   const baseBKeys = new Set<string>();
 
-  // Flag hexes
-  tiles.set(hexToString(flagA), 'base_a');
-  baseAKeys.add(hexToString(flagA));
-  tiles.set(hexToString(flagB), 'base_b');
-  baseBKeys.add(hexToString(flagB));
-
-  // Spawns: closest ground neighbors to flag, pick up to 4
-  function pickSpawns(flag: Hex, baseType: TileType, baseKeySet: Set<string>): Hex[] {
+  function pickSpawns(flag: Hex, baseType: TileType, baseKeySet: Set<string>, count: number): Hex[] {
     const neighbors = getNeighbors(flag).filter((n) => tiles.has(hexToString(n)));
-    // Sort by distance to center (prefer outer spawns for variety, but they're all dist 1)
-    // Just take up to 4
-    const spawns = neighbors.slice(0, 4);
+    // Distribute spawns evenly around the flag by spacing indices
+    // getNeighbors returns 6 directions: N, NE, SE, S, SW, NW (indices 0-5)
+    // For count=2: pick indices 0,3 (opposite sides)
+    // For count=3: pick indices 0,2,4 (every other)
+    // For count=4: pick indices 0,1,3,4 (skip 2 and 5 — balanced)
+    // For count=5: pick indices 0,1,2,3,4 (skip 5)
+    // For count=6: all
+    const available = neighbors.length;
+    let indices: number[];
+    if (count >= available) {
+      indices = Array.from({ length: available }, (_, i) => i);
+    } else if (count === 1) {
+      indices = [0];
+    } else {
+      // Evenly space around the ring
+      indices = [];
+      for (let i = 0; i < count; i++) {
+        indices.push(Math.round((i * available) / count) % available);
+      }
+    }
+    const spawns = indices.map(i => neighbors[i]);
     for (const s of spawns) {
       const key = hexToString(s);
       tiles.set(key, baseType);
@@ -124,8 +166,37 @@ export function generateMap(config?: MapConfig): GameMap {
     return spawns;
   }
 
-  const spawnsA = pickSpawns(flagA, 'base_a', baseAKeys);
-  const spawnsB = pickSpawns(flagB, 'base_b', baseBKeys);
+  const basesA: BaseLocation[] = [];
+  const basesB: BaseLocation[] = [];
+
+  for (let i = 0; i < flagCount; i++) {
+    // Team A flag
+    tiles.set(hexToString(flagPositionsA[i]), 'base_a');
+    baseAKeys.add(hexToString(flagPositionsA[i]));
+    // Mark ALL neighbors of the flag as base tiles (castle walls around the keep)
+    for (const n of getNeighbors(flagPositionsA[i])) {
+      const nk = hexToString(n);
+      if (tiles.has(nk) && !baseAKeys.has(nk)) {
+        tiles.set(nk, 'base_a');
+        baseAKeys.add(nk);
+      }
+    }
+    const spawnsA = pickSpawns(flagPositionsA[i], 'base_a', baseAKeys, spawnsPerBase);
+    basesA.push({ flag: flagPositionsA[i], spawns: spawnsA });
+
+    // Team B flag (180° mirror)
+    tiles.set(hexToString(flagPositionsB[i]), 'base_b');
+    baseBKeys.add(hexToString(flagPositionsB[i]));
+    for (const n of getNeighbors(flagPositionsB[i])) {
+      const nk = hexToString(n);
+      if (tiles.has(nk) && !baseBKeys.has(nk)) {
+        tiles.set(nk, 'base_b');
+        baseBKeys.add(nk);
+      }
+    }
+    const spawnsB = pickSpawns(flagPositionsB[i], 'base_b', baseBKeys, spawnsPerBase);
+    basesB.push({ flag: flagPositionsB[i], spawns: spawnsB });
+  }
 
   // Collect all protected hexes (bases + buffer around bases + corridor around center)
   const protectedKeys = new Set<string>();
@@ -156,10 +227,7 @@ export function generateMap(config?: MapConfig): GameMap {
     return {
       tiles,
       radius,
-      bases: {
-        A: { flag: flagA, spawns: spawnsA },
-        B: { flag: flagB, spawns: spawnsB },
-      },
+      bases: { A: basesA, B: basesB },
     };
   }
 
@@ -273,9 +341,12 @@ export function generateMap(config?: MapConfig): GameMap {
     tiles.set(key, 'wall');
   }
 
-  // 6. Ensure connectivity: BFS from flag A must reach flag B
-  // If not connected, remove walls along the shortest conceptual path until connected
-  ensureConnectivity(tiles, allKeys, flagA, flagB, wallKeys, protectedKeys);
+  // 6. Ensure connectivity: BFS from each flag A to each flag B
+  for (const baseA of basesA) {
+    for (const baseB of basesB) {
+      ensureConnectivity(tiles, allKeys, baseA.flag, baseB.flag, wallKeys, protectedKeys);
+    }
+  }
 
   // 7. Add forest border ring around the playable area
   // All hexes at radius+1 become wall tiles (visual boundary)
@@ -292,10 +363,7 @@ export function generateMap(config?: MapConfig): GameMap {
   return {
     tiles,
     radius: radius + 1, // Include the border ring in the reported radius
-    bases: {
-      A: { flag: flagA, spawns: spawnsA },
-      B: { flag: flagB, spawns: spawnsB },
-    },
+    bases: { A: basesA, B: basesB },
   };
 }
 

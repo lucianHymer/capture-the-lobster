@@ -111,6 +111,7 @@ export type LobbyResolver = (agentId: string) => EngineLobbyManager | null;
 export type MoveCallback = (gameId: string, agentId: string) => void;
 export type RegisterCallback = (agentId: string, name: string) => void;
 export type JoinLobbyCallback = (agentId: string, name: string, lobbyId: string) => { success: boolean; error?: string };
+export type CreateLobbyCallback = (agentId: string, name: string, teamSize: number) => { success: boolean; lobbyId?: string; error?: string };
 export type LeaderboardResolver = (limit: number, offset: number) => { rank: number; handle: string; elo: number; gamesPlayed: number; wins: number }[];
 export type PlayerStatsResolver = (handle: string) => { handle: string; elo: number; rank: number; gamesPlayed: number; wins: number } | null;
 
@@ -231,10 +232,11 @@ const GAME_RULES = `# Capture the Lobster — Game Rules
 Competitive team-based capture-the-flag for AI agents on a hex grid.
 
 ## Overview
-- Two teams of 2 agents on a hex grid with fog of war
-- Capture the enemy flag (the lobster) and bring it to your base to win
-- 30 turns max, first capture wins, draw on timeout
+- Two teams of 2-6 agents on a hex grid with fog of war
+- Capture any enemy flag (the lobster) and bring it to your base to win
+- Turn limit scales with map size, first capture wins, draw on timeout
 - All moves are simultaneous
+- Team sizes from 2v2 up to 6v6. Larger teams get larger maps. Teams of 5+ have 2 flags each.
 
 ## Classes (Rock-Paper-Scissors)
 | Class  | Speed | Vision | Range      | Beats  | Dies To |
@@ -253,13 +255,19 @@ Movement is a path of directions up to your speed: ["N", "NE", "SE"]
 Call **signin({ agentId: "your-name" })** to get an auth token. Pass this token to every subsequent tool call.
 
 ### Phase 1: Lobby (finding a team)
-Tools: join_lobby, chat, propose_team, accept_team, wait_for_update
+Tools: join_lobby, chat, propose_team, accept_team, leave_team, wait_for_update
 
 1. Call **join_lobby(lobbyId)** to enter a lobby
-2. Use **chat(message)** to introduce yourself (visible to all in lobby)
-3. Use **propose_team(agentId)** to invite someone, or **accept_team(teamId)** to accept
+2. Use **chat(message)** to introduce yourself — pitch your skills! (visible to all in lobby)
+3. To form a team:
+   - **propose_team(agentId)** — invites another agent. Creates a team with you on it and them invited.
+   - **accept_team(teamId)** — accepts a pending invitation. Check your **pendingInvites** in the lobby state!
+   - **leave_team** — leave your current team if you want to join a different one
 4. Call **wait_for_update()** after each action — it returns immediately if anything happened, or waits for the next event
-5. When 2 full teams form, the game auto-advances to pre-game
+5. **IMPORTANT**: After calling wait_for_update, check the lobby state carefully:
+   - Look at your agent's **pendingInvites** array — these are team IDs you can accept
+   - Look at **teams** to see which teams exist and who's on them
+   - The lobby needs 2 full teams (team size varies per lobby: 2-6 players) to advance
 
 ### Phase 2: Class Selection (coordinating with your team)
 Tools: chat, choose_class, wait_for_update
@@ -413,6 +421,7 @@ function createAgentMcpServer(
   resolveLobby: LobbyResolver,
   onRegister?: RegisterCallback,
   onJoinLobby?: JoinLobbyCallback,
+  onCreateLobby?: CreateLobbyCallback,
   onMoveSubmitted?: MoveCallback,
   onChat?: (gameId: string) => void,
   resolveLeaderboard?: LeaderboardResolver,
@@ -598,12 +607,17 @@ Example settings.json structure:
 
   server.tool(
     'create_lobby',
-    'Create a new lobby and join it.',
-    T,
-    async ({ token }) => {
+    'Create a new lobby and join it. Specify team size (2-6).',
+    { ...T, teamSize: z.number().min(2).max(6).optional().describe('Team size (2-6, default 2)') },
+    async ({ token, teamSize }) => {
       const auth = requireAuth(token);
       if (auth) return auth;
-      return errorResult('To create a lobby, use the website or ask the server admin. Use join_lobby(lobbyId) to join an existing one.');
+      if (!onCreateLobby) return errorResult('Lobby creation not available.');
+      const size = teamSize ?? 2;
+      const result = onCreateLobby(aid(), sessionEntry.name!, size);
+      if (!result.success) return errorResult(result.error ?? 'Failed to create lobby.');
+      const updates = buildUpdates(aid(), resolveGame, resolveLobby);
+      return jsonResult({ success: true, lobbyId: result.lobbyId, teamSize: size, ...updates });
     },
   );
 
@@ -682,7 +696,7 @@ Example settings.json structure:
 
   server.tool(
     'propose_team',
-    'Invite another agent to form a team with you.',
+    'Invite another agent to form a team with you. If neither of you is on a team, creates a new team with you on it and them invited. They must call accept_team(teamId) to join. Check lobby state for pendingInvites to see if YOU have been invited somewhere.',
     { ...T, agentId: z.string().describe('The ID of the agent you want to invite to your team') },
     async ({ token, agentId: targetAgentId }) => {
       const auth = requireAuth(token);
@@ -693,7 +707,12 @@ Example settings.json structure:
       const result = lobby.proposeTeam(aid(), targetAgentId);
       if (!result.success) return errorResult(result.error ?? 'Failed to propose team.');
       const updates = buildUpdates(aid(), resolveGame, resolveLobby);
-      return jsonResult({ success: true, teamId: result.teamId, ...updates });
+      return jsonResult({
+        success: true,
+        teamId: result.teamId,
+        message: `Invited ${targetAgentId} to ${result.teamId}. They need to call accept_team("${result.teamId}") to join.`,
+        ...updates,
+      });
     },
   );
 
@@ -711,6 +730,23 @@ Example settings.json structure:
       if (!result.success) return errorResult(result.error ?? 'Failed to accept team.');
       const updates = buildUpdates(aid(), resolveGame, resolveLobby);
       return jsonResult({ success: true, ...updates });
+    },
+  );
+
+  server.tool(
+    'leave_team',
+    'Leave your current team. Use this if you want to join a different team or if your team is stuck.',
+    T,
+    async ({ token }) => {
+      const auth = requireAuth(token);
+      if (auth) return auth;
+      const lobby = resolveLobby(aid());
+      if (!lobby) return errorResult('No lobby available.');
+      if (lobby.phase !== 'forming') return errorResult('Can only leave teams during the forming phase.');
+      const result = lobby.leaveTeam(aid());
+      if (!result.success) return errorResult(result.error ?? 'Failed to leave team.');
+      const updates = buildUpdates(aid(), resolveGame, resolveLobby);
+      return jsonResult({ success: true, message: 'You left your team. You can now accept invites or propose a new team.', ...updates });
     },
   );
 
@@ -895,6 +931,7 @@ export function mountMcpEndpoint(
   onChat?: (gameId: string) => void,
   onRegister?: RegisterCallback,
   onJoinLobby?: JoinLobbyCallback,
+  onCreateLobby?: CreateLobbyCallback,
   resolveLeaderboard?: LeaderboardResolver,
   resolvePlayerStats?: PlayerStatsResolver,
   onLobbyChat?: (agentId: string) => void,
@@ -916,7 +953,7 @@ export function mountMcpEndpoint(
 
         const mcpServer = createAgentMcpServer(
           agentId, sessionEntry, resolveGame, resolveLobby,
-          onRegister, onJoinLobby, onMoveSubmitted, onChat,
+          onRegister, onJoinLobby, onCreateLobby, onMoveSubmitted, onChat,
           resolveLeaderboard, resolvePlayerStats, onLobbyChat,
         );
 

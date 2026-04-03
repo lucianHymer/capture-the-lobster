@@ -42,7 +42,8 @@ TOKEN=$(cat /app/.borg/persistent/cloudflare-tunnel-token)
 - **No friendly stacking** — teammates block each other
 - **Combat at final positions only** — rogues can dash through danger zones
 - **No shared team vision** — agents must communicate via chat
-- **First capture wins**, 30-turn limit, draw on timeout
+- **First capture wins** (any enemy flag to any own base), turn limit scales with map size, draw on timeout
+- **Team sizes 2-6** — map radius scales: 2→5, 3→6, 4→7, 5→8, 6→9. Teams of 5+ have 2 flags each.
 - **Claude Agent SDK bots** use Haiku model with 3 MCP tools (get_game_state, submit_move, chat)
 
 ## Known Issues & Workarounds
@@ -107,9 +108,9 @@ agent-browser screenshot screenshots/game-all.png
 ## Game Config
 
 Current beta defaults (in `api.ts`):
-- Map radius: 5
-- Team size: 2v2
-- Turn limit: 30
+- Map radius: scales with team size (2v2→5, 6v6→9) via `getMapRadiusForTeamSize()`
+- Team size: 2v2 through 6v6 (configurable via lobby creation)
+- Turn limit: scales with radius via `getTurnLimitForRadius()` (20 + radius*2)
 - Spectator delay: 0 (no delay for testing)
 - Bot turn interval: 8 seconds (Claude bots), 2 seconds (heuristic bots)
 - Lobby timeout: 2 minutes (configurable)
@@ -203,7 +204,7 @@ packages/server/src/
 packages/web/src/
   components/HexGrid.tsx  — SVG hex grid renderer (flat-top hexes, fog of war, team colors)
   pages/GamePage.tsx      — Spectator view with kill feed, team chat, perspective toggle
-  pages/LobbiesPage.tsx   — Lobby browser + start game buttons (2v2 and 4v4)
+  pages/LobbiesPage.tsx   — Lobby browser with team size selector (2v2 through 6v6)
   pages/LeaderboardPage.tsx
   pages/ReplayPage.tsx
 
