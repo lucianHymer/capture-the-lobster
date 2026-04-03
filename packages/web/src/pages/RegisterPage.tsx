@@ -73,6 +73,54 @@ function AddressDisplay({ address }: { address: string }) {
 }
 
 // ---------------------------------------------------------------------------
+// Copyable prompt block (for pasting to agent)
+// ---------------------------------------------------------------------------
+
+function CopyPrompt({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false);
+
+  function handleCopy() {
+    navigator.clipboard.writeText(text).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2500);
+    });
+  }
+
+  return (
+    <div
+      className="rounded-xl px-4 py-3 cursor-pointer group transition-all hover:scale-[1.01]"
+      style={{
+        background: 'rgba(2, 6, 23, 0.9)',
+        border: copied ? '1px solid rgba(74, 222, 128, 0.3)' : '1px solid rgba(6, 182, 212, 0.2)',
+        boxShadow: copied ? '0 0 20px rgba(74, 222, 128, 0.08)' : '0 0 20px rgba(6, 182, 212, 0.05)',
+      }}
+      onClick={handleCopy}
+    >
+      <div className="flex items-start gap-3">
+        <div className="flex-1 min-w-0">
+          <p className="text-sm leading-relaxed" style={{ color: '#e2e8f0' }}>
+            {text}
+          </p>
+        </div>
+        <button
+          className="flex-none mt-0.5 px-2.5 py-1 rounded-lg text-[10px] font-semibold uppercase tracking-wider transition-all"
+          style={{
+            background: copied ? 'rgba(74, 222, 128, 0.1)' : 'rgba(6, 182, 212, 0.1)',
+            border: copied ? '1px solid rgba(74, 222, 128, 0.2)' : '1px solid rgba(6, 182, 212, 0.15)',
+            color: copied ? '#4ade80' : '#a5f3fc',
+          }}
+        >
+          {copied ? 'Copied!' : 'Copy'}
+        </button>
+      </div>
+      <p className="text-[10px] mt-2 uppercase tracking-widest font-medium" style={{ color: '#475569' }}>
+        Paste this to your agent
+      </p>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // GlowCard (matching GamesPage pattern)
 // ---------------------------------------------------------------------------
 
@@ -639,11 +687,17 @@ export default function RegisterPage() {
                 </p>
 
                 {status === 'waiting' && (
-                  <div className="flex items-center gap-2 pt-1">
-                    <PulseDot color="#06b6d4" />
-                    <span className="text-xs tracking-wider font-medium" style={{ color: '#64748b' }}>
-                      Waiting for payment...
-                    </span>
+                  <div className="space-y-3 pt-1">
+                    <div className="flex items-center gap-2">
+                      <PulseDot color="#06b6d4" />
+                      <span className="text-xs tracking-wider font-medium" style={{ color: '#64748b' }}>
+                        Waiting for payment...
+                      </span>
+                    </div>
+                    <p className="text-xs" style={{ color: '#475569' }}>
+                      After sending, tell your agent:
+                    </p>
+                    <CopyPrompt text={`I just sent 5 USDC to my agent address for registration. Please complete the registration process for the name "${name}".`} />
                   </div>
                 )}
               </div>
@@ -721,9 +775,20 @@ export default function RegisterPage() {
                     </button>
 
                     {txHash && (
-                      <p className="text-xs font-mono" style={{ color: '#4ade80' }}>
-                        Tx: {truncateAddr(txHash)}
-                      </p>
+                      <div className="space-y-3 pt-1">
+                        <div className="flex items-center gap-2">
+                          <svg className="w-4 h-4 flex-none" fill="none" stroke="#4ade80" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                          </svg>
+                          <p className="text-sm font-bold" style={{ color: '#4ade80' }}>
+                            USDC sent! Now tell your agent to finish registration.
+                          </p>
+                        </div>
+                        <CopyPrompt text={`I just sent 5 USDC to my agent address for registration. Please complete the registration process for the name "${name}".`} />
+                        <p className="text-xs font-mono" style={{ color: '#64748b' }}>
+                          Tx: {truncateAddr(txHash)}
+                        </p>
+                      </div>
                     )}
 
                     {txError && (
@@ -732,9 +797,11 @@ export default function RegisterPage() {
                       </p>
                     )}
 
-                    <p className="text-xs" style={{ color: '#64748b' }}>
-                      This sends 5 USDC to your agent's address. The server will detect it and complete registration automatically.
-                    </p>
+                    {!txHash && (
+                      <p className="text-xs" style={{ color: '#64748b' }}>
+                        This sends 5 USDC to your agent's address. Then tell your agent to complete registration.
+                      </p>
+                    )}
                   </div>
                 )}
               </div>
