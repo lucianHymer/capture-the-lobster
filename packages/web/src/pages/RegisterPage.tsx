@@ -73,6 +73,52 @@ function AddressDisplay({ address }: { address: string }) {
 }
 
 // ---------------------------------------------------------------------------
+// Copyable address block (styled to match CopyPrompt)
+// ---------------------------------------------------------------------------
+
+function CopyableAddress({ address }: { address: string }) {
+  const [copied, setCopied] = useState(false);
+
+  function handleCopy() {
+    navigator.clipboard.writeText(address).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2500);
+    });
+  }
+
+  return (
+    <div
+      className="rounded-xl px-5 py-4 cursor-pointer group transition-all hover:scale-[1.01]"
+      style={{
+        background: 'rgba(2, 6, 23, 0.9)',
+        border: copied ? '1px solid rgba(74, 222, 128, 0.3)' : '1px solid rgba(6, 182, 212, 0.25)',
+        boxShadow: copied ? '0 0 20px rgba(74, 222, 128, 0.08)' : '0 0 30px rgba(6, 182, 212, 0.08)',
+      }}
+      onClick={handleCopy}
+    >
+      <div className="flex items-center gap-3">
+        <code
+          className="font-mono text-base sm:text-lg font-black flex-1 leading-relaxed"
+          style={{ color: '#f1f5f9', wordBreak: 'break-all', letterSpacing: '0.02em' }}
+        >
+          {address}
+        </code>
+        <button
+          className="flex-none px-2.5 py-1 rounded-lg text-[10px] font-semibold uppercase tracking-wider transition-all"
+          style={{
+            background: copied ? 'rgba(74, 222, 128, 0.1)' : 'rgba(6, 182, 212, 0.1)',
+            border: copied ? '1px solid rgba(74, 222, 128, 0.2)' : '1px solid rgba(6, 182, 212, 0.15)',
+            color: copied ? '#4ade80' : '#a5f3fc',
+          }}
+        >
+          {copied ? 'Copied!' : 'Copy'}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Copyable prompt block (for pasting to agent)
 // ---------------------------------------------------------------------------
 
@@ -175,6 +221,9 @@ function useCountdown(expiresTimestamp: number | null) {
   if (remaining === null) return null;
   if (remaining <= 0) return 'expired';
 
+  // Don't show countdown if more than 2 hours away (likely a far-future placeholder)
+  if (remaining > 7200) return null;
+
   const minutes = Math.floor(remaining / 60);
   const seconds = remaining % 60;
   return `${minutes}:${seconds.toString().padStart(2, '0')}`;
@@ -248,6 +297,7 @@ function useWallet() {
   const [account, setAccount] = useState<string | null>(null);
   const [connecting, setConnecting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [usdcBalance, setUsdcBalance] = useState<number | null>(null);
 
   const hasEthereum = typeof window !== 'undefined' && !!(window as any).ethereum;
 
@@ -265,6 +315,19 @@ function useWallet() {
       const accounts = await ethereum.request({ method: 'eth_requestAccounts' });
       if (accounts && accounts.length > 0) {
         setAccount(accounts[0]);
+
+        // Check USDC balance — balanceOf(address) selector = 0x70a08231
+        try {
+          const balData = '0x70a08231' + accounts[0].replace('0x', '').toLowerCase().padStart(64, '0');
+          const result = await ethereum.request({
+            method: 'eth_call',
+            params: [{ to: USDC_ADDRESS, data: balData }, 'latest'],
+          });
+          const balWei = parseInt(result, 16);
+          setUsdcBalance(balWei / 1e6); // USDC has 6 decimals
+        } catch {
+          // Balance check failed, don't block the flow
+        }
       }
     } catch (err: any) {
       setError(err?.message ?? 'Failed to connect wallet');
@@ -273,7 +336,7 @@ function useWallet() {
     }
   }, [hasEthereum]);
 
-  return { account, connecting, error, connect, hasEthereum };
+  return { account, connecting, error, connect, hasEthereum, usdcBalance };
 }
 
 // ---------------------------------------------------------------------------
@@ -659,28 +722,7 @@ export default function RegisterPage() {
                 </p>
 
                 {/* Large copyable address — big, bold, unmissable */}
-                <div
-                  className="rounded-xl px-5 py-5 text-center cursor-pointer group transition-all hover:scale-[1.01]"
-                  style={{
-                    background: 'rgba(2, 6, 23, 0.9)',
-                    border: '1px solid rgba(6, 182, 212, 0.25)',
-                    boxShadow: '0 0 30px rgba(6, 182, 212, 0.08)',
-                  }}
-                  onClick={() => navigator.clipboard.writeText(agentAddr)}
-                >
-                  <code
-                    className="font-mono text-base sm:text-lg font-black block leading-relaxed"
-                    style={{ color: '#f1f5f9', wordBreak: 'break-all', letterSpacing: '0.02em' }}
-                  >
-                    {agentAddr}
-                  </code>
-                  <span
-                    className="text-[10px] mt-3 block uppercase tracking-widest font-medium"
-                    style={{ color: 'rgba(6, 182, 212, 0.5)' }}
-                  >
-                    Click to copy
-                  </span>
-                </div>
+                <CopyableAddress address={agentAddr} />
 
                 <p className="text-xs" style={{ color: '#64748b' }}>
                   Verify this matches what your agent said. Send from Coinbase, an exchange, another wallet, etc.
@@ -754,11 +796,28 @@ export default function RegisterPage() {
                   <div className="space-y-3">
                     <p className="text-sm" style={{ color: '#94a3b8' }}>
                       Connected: <code className="font-mono text-xs" style={{ color: '#a78bfa' }}>{truncateAddr(wallet.account)}</code>
+                      {wallet.usdcBalance !== null && (
+                        <span className="ml-2" style={{ color: wallet.usdcBalance >= 5 ? '#4ade80' : '#fb7185' }}>
+                          ({wallet.usdcBalance.toFixed(2)} USDC)
+                        </span>
+                      )}
                     </p>
+
+                    {wallet.usdcBalance !== null && wallet.usdcBalance < 5 && (
+                      <div className="rounded-lg px-4 py-3" style={{
+                        background: 'rgba(244, 63, 94, 0.08)',
+                        border: '1px solid rgba(244, 63, 94, 0.2)',
+                      }}>
+                        <p className="text-xs" style={{ color: '#fb7185' }}>
+                          Insufficient USDC balance. You need at least 5 USDC on Optimism to register.
+                          Use option 1 above to send from an exchange instead.
+                        </p>
+                      </div>
+                    )}
 
                     <button
                       onClick={handleWalletRegister}
-                      disabled={txSending || !!txHash}
+                      disabled={txSending || !!txHash || (wallet.usdcBalance !== null && wallet.usdcBalance < 5)}
                       className="rounded-xl px-6 py-2.5 text-sm font-semibold tracking-wider uppercase transition-all hover:scale-105 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                       style={{
                         background: 'linear-gradient(135deg, rgba(6, 182, 212, 0.2), rgba(139, 92, 246, 0.2))',
