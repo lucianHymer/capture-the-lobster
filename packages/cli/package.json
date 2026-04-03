@@ -1,0 +1,23 @@
+{
+  "name": "coordination",
+  "version": "0.1.0",
+  "type": "module",
+  "bin": {
+    "coordination": "dist/index.js"
+  },
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc --skipLibCheck",
+    "dev": "tsx watch src/index.ts"
+  },
+  "dependencies": {
+    "commander": "^12.0.0",
+    "ethers": "^6.13.0",
+    "@modelcontextprotocol/sdk": "^1.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.19.15",
+    "typescript": "^5.4.0",
+    "tsx": "^4.0.0"
+  }
+}
