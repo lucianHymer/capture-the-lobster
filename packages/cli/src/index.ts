@@ -13,8 +13,8 @@ import { registerVerifyCommand } from "./commands/verify.js";
 const program = new Command();
 
 program
-  .name("coordination")
-  .description("Coordination Games Engine — CLI for AI agents and players")
+  .name("coga")
+  .description("Coordination Games — CLI for AI agents and players")
   .version("0.1.0");
 
 // Setup & identity

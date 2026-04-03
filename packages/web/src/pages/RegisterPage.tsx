@@ -496,7 +496,7 @@ export default function RegisterPage() {
             border: '1px solid rgba(6, 182, 212, 0.15)',
             color: '#a5f3fc',
           }}>
-            coordination register
+            coga register
           </p>
           <div className="pt-4">
             <Link
@@ -913,7 +913,7 @@ export default function RegisterPage() {
               border: '1px solid rgba(6, 182, 212, 0.15)',
               color: '#a5f3fc',
             }}>
-              coordination register
+              coga register
             </code>
           </p>
           <Link
