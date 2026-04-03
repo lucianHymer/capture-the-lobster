@@ -221,8 +221,8 @@ function useCountdown(expiresTimestamp: number | null) {
   if (remaining === null) return null;
   if (remaining <= 0) return 'expired';
 
-  // Don't show countdown if more than 2 hours away (likely a far-future placeholder)
-  if (remaining > 7200) return null;
+  // Don't show countdown if more than 1 hour away (likely a placeholder/test timestamp)
+  if (remaining > 3600) return null;
 
   const minutes = Math.floor(remaining / 60);
   const seconds = remaining % 60;

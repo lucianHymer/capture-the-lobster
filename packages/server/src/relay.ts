@@ -73,7 +73,8 @@ export function createRelayRouter(): express.Router | null {
     return null;
   }
 
-  const provider = new ethers.JsonRpcProvider(config.rpcUrl);
+  // Use staticNetwork to prevent ethers from polling eth_chainId/eth_blockNumber repeatedly
+  const provider = new ethers.JsonRpcProvider(config.rpcUrl, undefined, { staticNetwork: true });
   const relayerWallet = new ethers.Wallet(config.relayerPrivateKey, provider);
 
   // Load ABIs
