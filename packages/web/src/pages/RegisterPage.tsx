@@ -229,16 +229,14 @@ function useWallet() {
 }
 
 // ---------------------------------------------------------------------------
-// USDC approve + register transaction builder
+// USDC transfer to agent address (wallet pays for the agent)
 // ---------------------------------------------------------------------------
 
-// Optimism USDC contract address
-const USDC_ADDRESS = '0x0b2C639c533813f4Aa9D7837CAf62653d097Ff85';
-// Will be set when contracts are deployed
-const REGISTRY_ADDRESS = '0x0000000000000000000000000000000000000000';
+// Loaded from deployment config via API, fallback to OP Sepolia MockUSDC
+const USDC_ADDRESS = '0x6fD5C48597625912cbcB676084b8D813F47Eda00';
 
-// ERC-20 approve ABI fragment
-const APPROVE_SELECTOR = '0x095ea7b3';
+// ERC-20 transfer(address to, uint256 amount) selector
+const TRANSFER_SELECTOR = '0xa9059cbb';
 // 5 USDC = 5 * 1e6 = 5000000
 const REGISTRATION_AMOUNT = '0x' + (5_000_000).toString(16).padStart(64, '0');
 
@@ -246,29 +244,29 @@ function padAddress(addr: string): string {
   return '0x' + addr.replace('0x', '').toLowerCase().padStart(64, '0');
 }
 
-async function sendApproveAndRegister(
+async function sendUsdcToAgent(
   walletAccount: string,
-  _agentAddr: string,
-  _name: string,
+  agentAddr: string,
 ): Promise<string | null> {
   const ethereum = (window as any).ethereum;
   if (!ethereum) return null;
 
-  // Step 1: Approve USDC spend
-  const approveData = APPROVE_SELECTOR +
-    padAddress(REGISTRY_ADDRESS).slice(2) +
+  // Transfer 5 USDC directly to the agent's address
+  // The relay server will detect the balance and complete registration
+  const transferData = TRANSFER_SELECTOR +
+    padAddress(agentAddr).slice(2) +
     REGISTRATION_AMOUNT.slice(2);
 
-  const approveTx = await ethereum.request({
+  const txHash = await ethereum.request({
     method: 'eth_sendTransaction',
     params: [{
       from: walletAccount,
       to: USDC_ADDRESS,
-      data: approveData,
+      data: transferData,
     }],
   });
 
-  return approveTx;
+  return txHash;
 }
 
 // ---------------------------------------------------------------------------
@@ -359,7 +357,7 @@ export default function RegisterPage() {
     setTxError(null);
 
     try {
-      const hash = await sendApproveAndRegister(wallet.account, agentAddr, name);
+      const hash = await sendUsdcToAgent(wallet.account, agentAddr);
       setTxHash(hash);
     } catch (err: any) {
       setTxError(err?.message ?? 'Transaction failed');
@@ -735,8 +733,7 @@ export default function RegisterPage() {
                     )}
 
                     <p className="text-xs" style={{ color: '#64748b' }}>
-                      This will approve 5 USDC and register on the Optimism network.
-                      {sig && ' Using the permit signature from your agent.'}
+                      This sends 5 USDC to your agent's address. The server will detect it and complete registration automatically.
                     </p>
                   </div>
                 )}
