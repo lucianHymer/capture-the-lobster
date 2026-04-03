@@ -446,28 +446,38 @@ export default function RegisterPage() {
             Register Your Agent
           </h1>
 
-          {/* Name display — big and prominent with cyan glow */}
+          {/* Name display — rainbow gradient */}
           <div
             className="inline-block rounded-2xl px-8 py-4"
             style={{
-              background: 'linear-gradient(135deg, rgba(6, 182, 212, 0.1), rgba(139, 92, 246, 0.08))',
-              border: '2px solid rgba(6, 182, 212, 0.3)',
-              boxShadow: '0 0 40px rgba(6, 182, 212, 0.15), 0 0 80px rgba(6, 182, 212, 0.05)',
+              background: 'linear-gradient(135deg, rgba(6, 182, 212, 0.08), rgba(139, 92, 246, 0.06), rgba(244, 63, 94, 0.04))',
+              border: '2px solid rgba(6, 182, 212, 0.2)',
+              boxShadow: '0 0 40px rgba(6, 182, 212, 0.1), 0 0 60px rgba(139, 92, 246, 0.05)',
             }}
           >
             <p
               className="text-3xl sm:text-4xl font-black tracking-wide"
               style={{
-                color: '#a5f3fc',
-                textShadow: '0 0 20px rgba(6, 182, 212, 0.4)',
+                background: 'linear-gradient(90deg, #06b6d4, #a78bfa, #f43f5e, #f59e0b, #4ade80, #06b6d4)',
+                backgroundSize: '200% 100%',
+                WebkitBackgroundClip: 'text',
+                WebkitTextFillColor: 'transparent',
+                backgroundClip: 'text',
+                animation: 'rainbow-shift 6s linear infinite',
               }}
             >
               {name}
             </p>
           </div>
+          <style>{`
+            @keyframes rainbow-shift {
+              0% { background-position: 0% 50%; }
+              100% { background-position: 200% 50%; }
+            }
+          `}</style>
 
           <p className="text-sm" style={{ color: '#64748b' }}>
-            Make sure this matches what your agent told you
+            Verify this matches what your agent told you
           </p>
 
           {/* Countdown */}
@@ -477,22 +487,6 @@ export default function RegisterPage() {
             </p>
           )}
         </div>
-
-        {/* Agent Address Section */}
-        <GlowCard color="cyan">
-          <div className="space-y-3">
-            <h2
-              className="text-sm font-bold uppercase tracking-wider"
-              style={{ color: '#64748b' }}
-            >
-              Agent Address
-            </h2>
-            <AddressDisplay address={agentAddr} />
-            <p className="text-xs" style={{ color: '#64748b' }}>
-              This is the address your agent generated. Verify it matches your terminal.
-            </p>
-          </div>
-        </GlowCard>
 
         {/* Status Section */}
         {status !== 'waiting' && (
@@ -615,35 +609,35 @@ export default function RegisterPage() {
 
                 <p className="text-sm" style={{ color: '#94a3b8' }}>
                   Send exactly <strong style={{ color: '#a5f3fc' }}>5 USDC</strong> on the{' '}
-                  <strong style={{ color: '#f1f5f9' }}>Optimism</strong> network to your agent's address:
+                  <strong style={{ color: '#f1f5f9' }}>Optimism</strong> network to:
                 </p>
 
-                {/* Large copyable address */}
+                {/* Large copyable address — big, bold, unmissable */}
                 <div
-                  className="rounded-xl px-5 py-4 text-center cursor-pointer group transition-all hover:scale-[1.01]"
+                  className="rounded-xl px-5 py-5 text-center cursor-pointer group transition-all hover:scale-[1.01]"
                   style={{
-                    background: 'rgba(2, 6, 23, 0.8)',
-                    border: '1px solid rgba(6, 182, 212, 0.2)',
-                    boxShadow: '0 0 20px rgba(6, 182, 212, 0.05)',
+                    background: 'rgba(2, 6, 23, 0.9)',
+                    border: '1px solid rgba(6, 182, 212, 0.25)',
+                    boxShadow: '0 0 30px rgba(6, 182, 212, 0.08)',
                   }}
                   onClick={() => navigator.clipboard.writeText(agentAddr)}
                 >
                   <code
-                    className="font-mono text-sm sm:text-base font-bold block"
-                    style={{ color: '#a5f3fc', wordBreak: 'break-all' }}
+                    className="font-mono text-base sm:text-lg font-black block leading-relaxed"
+                    style={{ color: '#f1f5f9', wordBreak: 'break-all', letterSpacing: '0.02em' }}
                   >
                     {agentAddr}
                   </code>
                   <span
-                    className="text-[10px] mt-2 block uppercase tracking-widest font-medium"
-                    style={{ color: 'rgba(6, 182, 212, 0.4)' }}
+                    className="text-[10px] mt-3 block uppercase tracking-widest font-medium"
+                    style={{ color: 'rgba(6, 182, 212, 0.5)' }}
                   >
                     Click to copy
                   </span>
                 </div>
 
-                <p className="text-xs" style={{ color: '#475569' }}>
-                  From Coinbase, an exchange, another wallet, etc.
+                <p className="text-xs" style={{ color: '#64748b' }}>
+                  Verify this matches what your agent said. Send from Coinbase, an exchange, another wallet, etc.
                 </p>
 
                 {status === 'waiting' && (
