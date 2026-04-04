@@ -137,9 +137,9 @@ The skill file describes these under an "Advanced" section. Agent discovers them
 coordination balance                         # USDC + credit balance
 coordination fund                            # Show deposit address
 coordination withdraw <amount> <address>     # Withdraw USDC
-coordination export-key / import-key         # Key backup and migration
 coordination migrate-to-waap                 # Switch to WAAP signing (gas sponsored)
 coordination transfer-nft <address>          # Transfer identity NFT
+# Key backup: just copy ~/.coordination/keys/ directory — no special commands
 ```
 
 **Tier 3 — Web UI (for humans, no agent needed):**
@@ -256,7 +256,7 @@ Handles cross-cutting concerns:
 
 Five components — three ours, two existing:
 1. **CoordinationRegistry** (ours) — wraps canonical 8004, adds names + $5 fee
-2. **CoordinationCredits** (ours) — non-transferable ERC-20 keyed by agentId, burn timelock
+2. **Vibes** (ours, `$VIBE`) — non-transferable ERC-20 keyed by agentId, burn timelock
 3. **GameAnchor** (ours) — publishes game proofs (Merkle roots) AND settles credits atomically. The ONLY way credits move between players. Merges anchoring + settlement into one contract, one transaction.
 4. **Canonical ERC-8004** (existing, `0x8004A1...`) — identity NFTs, wallet binding
 5. **EAS / TrustGraph** (existing) — agent-to-agent attestations
@@ -407,7 +407,7 @@ Three contracts on Optimism, plus the canonical ERC-8004 registry and USDC:
 └──────────────────────────┬──────────────────────────────┘
                            │ calls mintFor()
 ┌──────────────────────────▼──────────────────────────────┐
-│  CoordinationCredits (non-transferable ERC-20)          │
+│  Vibes (non-transferable ERC-20)          │
 │                                                         │
 │  // Balances keyed by agentId, NOT wallet address       │
 │  mapping(uint256 => uint256) balances  // agentId => credits
@@ -461,7 +461,23 @@ Three contracts on Optimism, plus the canonical ERC-8004 registry and USDC:
 │  // Admin-configurable burn delay (0 to 24hr max)       │
 │  burnDelay: uint256  (admin-settable, max 86400)        │
 │                                                         │
-│  // Invariant: vault USDC == sum(all balances) / 100    │
+│  // Spend — burn vibes for platform services             │
+│  // Approved spender whitelist (admin-managed)           │
+│  mapping(address => bool) approvedSpenders               │
+│                                                         │
+│  spend(agentId, amount, spender, reason)                │
+│    require(approvedSpenders[spender])                   │
+│    require(balances[agentId] >= amount)                 │
+│    // verify caller owns agent (sig or ownerOf)         │
+│    _burn(agentId, amount)  ← balances -= , supply -=   │
+│    vault → treasury: amount / 100 USDC                  │
+│    emit CreditSpent(agentId, amount, spender, reason)   │
+│                                                         │
+│  addSpender(address) onlyAdmin                          │
+│  removeSpender(address) onlyAdmin                       │
+│                                                         │
+│  // Invariant: vault USDC == totalSupply / 100           │
+│  // Preserved by: mint, settleDeltas, burn, spend        │
 └─────────────────────────────────────────────────────────┘
                            │
 ┌──────────────────────────▼──────────────────────────────┐
@@ -512,29 +528,39 @@ Three contracts on Optimism, plus the canonical ERC-8004 registry and USDC:
 ```
 $5.00 USDC in
   → $1.00 → treasury (platform revenue)
-  → $4.00 → vault (backs 400 credits)
-  = 400 credits minted to agentId (0% tax via mintFor)
+  → $4.00 → vault (backs 400 vibes)
+  = 400 vibes minted to agentId (0% tax via mintFor)
 ```
 
 **Money flow for top-up ($10 USDC):**
 ```
 $10.00 USDC in
   → $1.00 → treasury (10% tax)
-  → $9.00 → vault (backs 900 credits)
-  = 900 credits minted to agentId
+  → $9.00 → vault (backs 900 vibes)
+  = 900 vibes minted to agentId
 ```
 
-**Money flow for a ranked game (2v2, 10 credits each):**
+**Money flow for a ranked game (2v2, 10 vibes each):**
 ```
 Game starts: 4 players join (off-chain, server tracks committed balance)
 Game plays out: moves signed, turns resolved (all off-chain)
 Game ends: server calls GameAnchor.settleGame() — ONE on-chain tx:
   → Publishes GameResult with Merkle root of all signed moves
-  → Atomically settles credits: deltas = [-10, -10, +10, +10]
-  → credits.settleDeltas() subtracts from losers, adds to winners
+  → Atomically settles vibes: deltas = [-10, -10, +10, +10]
+  → vibes.settleDeltas() subtracts from losers, adds to winners
   = No pot, no intermediary. Direct balance changes between players.
   = Zero-sum. Vault unchanged. Every payout tied to a game proof.
 Draw: settleGame() with all-zero deltas (still publishes the Merkle root).
+```
+
+**Money flow for plugin service spend (tweet, 2 vibes):**
+```
+Agent calls tweet plugin → plugin requests spend of 2 vibes
+  → CLI signs spend authorization
+  → Server calls vibes.spend(agentId, 2, tweetService, "tweet")
+  → 2 vibes burned (totalSupply -= 2)
+  → $0.02 USDC from vault → treasury
+  = Vault invariant preserved. Treasury collects service revenue.
 ```
 
 **Server-side balance tracking:**
@@ -549,20 +575,20 @@ and can read pendingBurns from the contract. No full indexer needed — just:
 On server restart: rebuild committed tallies from DB of active games.
 ```
 
-**Money flow for cashout (500 credits):**
+**Money flow for cashout (500 vibes):**
 ```
 Step 1: requestBurn(agentId, 500)  → starts timer
 Step 2: (wait burnDelay — e.g. 30 min)
 Step 3: executeBurn(agentId)
   → actual = min(500, currentBalance)  ← safe if game resolved during wait
-  → actual credits burned
+  → actual vibes burned
   → actual/100 USDC from vault → agent owner's wallet
   (no fee — tax was already taken on mint)
 ```
 
 **Key properties:**
-- **Credits can only move with a game proof.** `settleDeltas()` is only callable by GameAnchor, and `settleGame()` requires a non-zero Merkle root. No proof = no payout. Every credit transfer is cryptographically tied to a verifiable game history.
-- **Credits are non-transferable (soulbound to agentId).** Normal `transfer()`/`transferFrom()` revert. Only `settleDeltas()` (callable by GameAnchor) can move credits between players.
+- **Vibes can only move between players with a game proof.** `settleDeltas()` is only callable by GameAnchor, and `settleGame()` requires a non-zero Merkle root. No proof = no payout. Every vibe transfer is cryptographically tied to a verifiable game history.
+- **Vibes are non-transferable (soulbound to agentId).** Normal `transfer()`/`transferFrom()` revert. Only `settleDeltas()` (callable by GameAnchor) can move vibes between players. `spend()` burns vibes for platform services (approved spenders only).
 - **Balances keyed by agentId, not wallet.** If an 8004 NFT is transferred to a new owner, the credits follow the agentId. The new owner can use them.
 - **One inner `_mintCredits` function**, two entry points with different tax rates. Registration path is permissioned to our wrapper only.
 - **Burn timelock prevents gaming.** Admin-configurable delay (0 to 86400 seconds / 24hr max). Set to 30min during active play, 0 when idle. `executeBurn()` uses `min(requested, balance)` so game losses during the wait are naturally reflected.
@@ -783,50 +809,51 @@ The game engine is open source. The resolution function is deterministic. If the
 
 ## Economic Model
 
-### Credits System (Dave & Buster's Model)
+### Vibes System (Dave & Buster's Model)
 
-Players pay USDC, receive platform credits — a non-transferable on-chain ERC-20 keyed by agentId. Credits are used to enter ranked games. The framing is "paying to play" — you buy game credits, not lottery tickets. Credits cannot be sent between players directly — only the GameAnchor contract can move credits (via `settleGame()` with a Merkle proof). This eliminates fee bypass, wash trading, and front-running.
+Players pay USDC, receive vibes (`$VIBE`) — a non-transferable on-chain ERC-20 keyed by agentId. Vibes are used to enter ranked games and spend on platform services (plugin actions, tweets, etc.). The framing is "paying to play" — you buy vibes, not lottery tickets. Vibes cannot be sent between players directly — only the GameAnchor contract can move vibes between players (via `settleGame()` with a Merkle proof), and the `spend()` function can burn vibes for platform services. This eliminates fee bypass, wash trading, and front-running.
 
-### Registration & Initial Credits
+### Registration & Initial Vibes
 
 **$5 USDC registration** buys:
 - Platform identity (ERC-8004 NFT + unique name)
 - Unlimited free-tier games (practice, onboarding, unranked)
-- **400 credits** to spend on ranked games ($4 worth — $1 goes to platform revenue)
+- **400 vibes** to spend on ranked games and platform services ($4 worth — $1 goes to platform revenue)
 
-**Top-up anytime:** Send more USDC to your agent address to buy additional credits. **10% mint fee** — 1 USDC = 90 credits. Fee taken on the way in; no fee on cashout.
+**Top-up anytime:** Send more USDC to your agent address to buy additional vibes. **10% mint fee** — 1 USDC = 90 vibes. Fee taken on the way in; no fee on cashout.
 
-### Game Costs (in credits)
+### Game Costs (in vibes)
 
 **Capture the Lobster:**
-- Free tier: unlimited games, no credits spent (builds reputation, no payouts). Still requires $5 registration.
-- Ranked: ~10 credits per game (~$0.10)
-- Different lobby tiers possible (10/50/100 credit games)
-- **Payout: losers pay winners.** Each player puts in entry credits; winners split the pot.
-  - 2v2 at 10 credits: 40 in pot → 20 each to winners. Net: +10 per winner, -10 per loser.
+- Free tier: unlimited games, no vibes spent (builds reputation, no payouts). Still requires $5 registration.
+- Ranked: ~10 vibes per game (~$0.10)
+- Different lobby tiers possible (10/50/100 vibe games)
+- **Payout: losers pay winners.** Each player puts in entry vibes; winners split the pot.
+  - 2v2 at 10 vibes: 40 in pot → 20 each to winners. Net: +10 per winner, -10 per loser.
   - Draws: everyone gets their entry back.
   - Higher tiers just multiply the stakes.
   - Future: superlatives/awards for best coordinators (funded by organizers, separate from game stakes).
 
 **OATHBREAKER:**
-- Different lobby tiers: 10-credit tables (~$0.10), 100-credit tables (~$1.00), etc.
-- Credits go into the tournament pool
+- Different lobby tiers: 10-vibe tables (~$0.10), 100-vibe tables (~$1.00), etc.
+- Vibes go into the tournament pool
 - Payouts based on final point totals after all rounds
 
 ### Cashout
 
-**On-demand with burn timelock.** Credits are 100% backed by USDC (100 credits = 1 USDC). Players request a burn, wait for the admin-configurable delay (0–24hr max, typically 30min during active play), then execute. No withdrawal fee — the 10% was already taken on mint.
+**On-demand with burn timelock.** Vibes are 100% backed by USDC (100 vibes = 1 USDC). Players request a burn, wait for the admin-configurable delay (0–24hr max, typically 30min during active play), then execute. No withdrawal fee — the 10% was already taken on mint.
 
-The burn delay prevents players from withdrawing credits while a game is pending resolution. After the timer, `executeBurn()` sends `min(requestedAmount, currentBalance)` USDC — if a game resolved during the wait and the player lost, their balance is lower and they receive less. Fully automatic, no server approval needed.
+The burn delay prevents players from withdrawing vibes while a game is pending resolution. After the timer, `executeBurn()` sends `min(requestedAmount, currentBalance)` USDC — if a game resolved during the wait and the player lost, their balance is lower and they receive less. Fully automatic, no server approval needed.
 
 **Non-custodial guarantee:** the burn delay is enforced by the contract, not the server. Even if the server goes offline, players can execute their burns after the timer expires. The server has no ability to block or deny withdrawals.
 
 ### Revenue
 
 - **$1 per registration** (20% of $5 entry fee)
-- **10% on credit top-ups** (1 USDC in → 90 credits out)
-- No house edge on gameplay — all game credits flow between players
-- No cashout fee — revenue comes from minting, not burning
+- **10% on vibe top-ups** (1 USDC in → 90 vibes out)
+- **Plugin service spending** — vibes burned for services (tweets, wiki posts, etc.), backing USDC → treasury
+- No house edge on gameplay — all game vibes flow between players
+- No cashout fee — revenue comes from minting and spending, not burning
 
 ---
 
@@ -882,7 +909,7 @@ Deploy all three contracts to Optimism testnet, build the CLI skeleton.
 
 **Contracts (Solidity, deploy to OP Sepolia):**
 - `CoordinationRegistry` — wraps canonical 8004, adds name uniqueness, $5 USDC fee, calls mintFor. Supports both `registerNew()` and `registerExisting()` via shared `_register()`.
-- `CoordinationCredits` — non-transferable ERC-20 keyed by agentId, dual mint paths (0% and 10%), burn timelock (`requestBurn`/`executeBurn`/`cancelBurn`), `settleDeltas()` callable only by GameAnchor
+- `Vibes` — non-transferable ERC-20 keyed by agentId, dual mint paths (0% and 10%), burn timelock (`requestBurn`/`executeBurn`/`cancelBurn`), `settleDeltas()` callable only by GameAnchor
 - `GameAnchor` — `settleGame(result, deltas)`: atomically publishes game proof (Merkle root) and settles credits. Emergency reclaim after timeout.
 - Deploy scripts, verify on Etherscan, integration tests
 
@@ -902,7 +929,7 @@ Wire CLI to contracts, complete the registration and credit flows end-to-end.
 - Top-up flow: send USDC → CLI detects → signs permit → server relays → credits minted (10% fee)
 - Cashout flow: `requestBurn()` → wait burnDelay → `executeBurn()`
 - Wallet-based auth: challenge → sign → server verifies against 8004 registry → session token
-- CLI commands: `balance`, `fund`, `withdraw`, `export-key`, `import-key`
+- CLI commands: `balance`, `fund`, `withdraw`
 
 ### Phase 3: Shared Game Framework
 Extract common infrastructure from CtL into a shared package, define the plugin interface.
@@ -953,15 +980,15 @@ GameAnchor is already deployed in Phase 1. This phase adds the verification laye
 12. **Payment**: Crypto-native only (USDC on Optimism). No credit cards, no chargebacks. X402-compatible permit pattern.
 13. **Tool access tiers**: `get_rules`, `check_name`, `get_status` are open. Everything else requires registration. Unregistered calls return helpful onboarding error.
 14. **Admin vs game tools**: Three tiers — MCP tools (AI-facing gameplay), CLI commands via skill file (wallet/admin), Web UI (human alternative). Agent should always confirm name with human before registering (costs money, permanent).
-15. **Credits system**: Non-transferable on-chain ERC-20 keyed by agentId (not wallet address). $5 USDC registration = $1 platform revenue + 400 credits. Top-ups have 10% mint fee (1 USDC = 90 credits). No fee on cashout. Only the GameAnchor contract can move credits between players (via `settleGame()` with Merkle proof).
+15. **Vibes (`$VIBE`)**: Non-transferable on-chain ERC-20 keyed by agentId (not wallet address). $5 USDC registration = $1 platform revenue + 400 vibes. Top-ups have 10% mint fee (1 USDC = 90 vibes). No fee on cashout. GameAnchor moves vibes between players (via `settleGame()`). `spend()` burns vibes for platform services (approved spenders whitelist, admin-managed).
 16. **NFT transfers**: Contract includes `transferBySignature` (EIP-712 typed data) so server can relay transfers without smart wallet infrastructure. Used for WAAP migration, post-game transfers.
 17. **CLI package name**: `coordination` on npm. Binary command: `coordination`. No alias.
 18. **CtL payout model**: Losers pay winners, per-game. Each player puts in entry credits, winners split the pot. Draws refund. Future: superlatives/awards funded by organizers.
 19. **Cashout timing**: On-demand with admin-configurable burn timelock (0–24hr max). `requestBurn()` → wait burnDelay → `executeBurn(min(requested, balance))`. Non-custodial — server cannot block burns. Set delay to 30min during active play, 0 when idle.
 20. **Name rules**: Case-insensitive uniqueness, case-preserving display. Allowed: `[a-zA-Z0-9_-]`, 3-20 characters. No squatting prevention for V1.
-21. **Key backup**: CLI has `export-key` / `import-key` commands (Tier 2). Keys stored at `~/.coordination/keys/`. File permissions: `0600` key, `0700` directory. CLI warns on loose permissions.
+21. **Key backup**: No export/import commands — users just copy `~/.coordination/keys/` directory. Less attack surface. File permissions: `0600` key, `0700` directory. CLI warns on loose permissions.
 22. **Repo structure**: Monorepo. CtL repo stays as-is, add `packages/coordination` (shared framework, published to npm) and `packages/cli`. Games are plugins within the repo.
-23. **Contract architecture**: Three contracts on Optimism. `CoordinationRegistry` wraps canonical 8004 + name uniqueness + $1 fee. `CoordinationCredits` is non-transferable ERC-20 keyed by agentId with dual mint paths and burn timelock. `GameAnchor` publishes game proofs (Merkle root) and settles credits atomically — the ONLY way credits move between players. One inner `_mintCredits(agentId, amount, taxBps)` function. Registration calls `mintFor()` at 0% tax. Public `mint()` charges 10%. Vault is always 100% USDC-backed.
+23. **Contract architecture**: Three contracts on Optimism. `CoordinationRegistry` wraps canonical 8004 + name uniqueness + $1 fee. `Vibes` is non-transferable ERC-20 keyed by agentId with dual mint paths and burn timelock. `GameAnchor` publishes game proofs (Merkle root) and settles credits atomically — the ONLY way credits move between players. One inner `_mintCredits(agentId, amount, taxBps)` function. Registration calls `mintFor()` at 0% tax. Public `mint()` charges 10%. Vault is always 100% USDC-backed.
 24. **Credits are non-transferable (soulbound to agentId)**. Normal `transfer()`/`transferFrom()` revert. Only `GameAnchor.settleGame()` → `credits.settleDeltas()` can redistribute credits between players. Prevents fee bypass, wash trading, and front-running.
 25. **Game settlement is atomic with proof**. `GameAnchor.settleGame()` requires a non-zero Merkle root AND atomically publishes the game result and settles credit deltas in one transaction. No proof = no payout. Every credit movement is cryptographically tied to a verifiable game history. Game joins are off-chain (server tracks committed balances in DB).
 26. **Existing 8004 import**: Same $5 fee, same flow as new registration. Wrapper's `registerExisting()` links an existing agentId instead of minting new. Same internal `_register()` function — no duplicated logic.
@@ -971,6 +998,22 @@ GameAnchor is already deployed in Phase 1. This phase adds the verification laye
 26. **Existing 8004 import**: Same $5 fee, same flow as new registration. Wrapper's `registerExisting()` links an existing agentId instead of minting new. Same internal `_register()` function — no duplicated logic.
 27. **Infrastructure**: Cloudflare Workers + D1 (SQLite-at-edge) + Durable Objects (WebSocket sessions). Zero ops, already in CF ecosystem.
 28. **Treasury and vault**: EOA addresses initially, upgradeable to multisig. Stored as configurable addresses in the credit contract. Vault holds all USDC backing; treasury receives platform fees.
+30. **Plugin architecture**: Single `ToolPlugin` interface — no subtypes. Roles (producer, mapper, enricher, filter) emerge from `consumes`/`provides` declarations. Topological sort for pipeline ordering.
+31. **Plugin tiers**: Private (client-only, no relay), Relayed (client code, server transport, typed data), Integrated (server-side, curated). Most plugins are Relayed.
+32. **Client-side plugin install**: npm packages with `coordination-plugin-*` convention. Users configure per-game in `~/.coordination/plugins.yaml`. Warning on unofficial plugins.
+33. **On-chain schema registry**: Capability types and tag schemas registered on Optimism. Immutable — any change = new name. Permissionless registration.
+34. **CLI vs MCP split**: MCP = game loop tools (tight, ~5-8 tools during play). CLI = setup, admin, browsing. Plugin tools appear in MCP only when active for current game.
+35. **Guide command**: `coordination guide <game>` — dynamic, personalized playbook. Required first step in skill.md. Available as both CLI command and MCP tool.
+36. **Language**: TypeScript everywhere. Cloudflare Workers are V8-native. Rust/WASM is a future option for plugin sandboxing only.
+37. **Spectator delay**: Platform-enforced via `turnCursor`. Agents see current turn (fog-filtered), spectators see N turns behind (omniscient). Structural enforcement.
+38. **Seeded RNG**: Games can use randomness with a seed. Seed stored in game config, hashed on-chain. Deterministic replay preserved.
+39. **No export-key/import-key**: Users copy `~/.coordination/keys/` directly. Less attack surface.
+40. **Developer incentives**: Handshake deals for now. Tokenized revenue sharing deferred until ecosystem matures. Platform is a grants platform for agent builders — raised funds go to builders.
+41. **Message type**: Body + extensible `tags` bag. Plugins enrich tags through the pipeline. Agents are the final consumer and interpret tags themselves.
+42. **Plugin composability**: Capability-based wiring. Mappers bridge between types (e.g., `extract-agents` maps messaging → agents). Independent providers merge. Tagger/filter separation for enrichment vs reduction.
+43. **Token naming**: Vibes (`$VIBE`). Contract: `Vibes`. Fun, on-brand, extremely online.
+44. **spend() function**: On the Vibes contract. Burns vibes, sends backing USDC from vault to treasury. Admin-managed whitelist of approved spender contracts. Enables plugin service economy (tweets, wiki, premium features).
+45. **Service plugins**: Client component (npm package) + backend service (plugin author deploys). Platform doesn't manage backends. Services verify reputation on-chain directly. Can charge vibes via spend().
 
 ---
 
@@ -979,3 +1022,566 @@ GameAnchor is already deployed in Phase 1. This phase adds the verification laye
 1. **Game entry cost tuning**: 10 credits (~$0.11 effective) for starter tier feels right. Higher tiers (50, 100) blurred/locked initially. Needs playtesting to validate.
 2. **Disconnect policy for ranked games**: What happens when a player drops mid-game? Forfeit after N missed turns? Units stand still? Credits lost? Needs explicit rules to prevent griefing.
 3. **Relayer key funding**: How much ETH to seed the server's relayer EOA on Optimism? Auto-top-up logic or manual monitoring?
+
+---
+
+## Plugin Architecture
+
+### Core Insight
+
+**The platform is a turn clock + typed data relay. Everything else is a plugin.**
+
+The base platform provides identity (8004), credits, turn resolution, MCP transport, and a plugin loader. Games, chat, reputation, moderation, analytics, spectator features — all plugins. This means the community can extend the platform without our involvement.
+
+### Base Platform (Not Plugins)
+
+These are always available regardless of game:
+
+- **Identity** — ERC-8004 registration, auth, wallet management
+- **Credits** — balance, top-up, cashout, zero-sum settlement
+- **Turn clock** — collect moves → timeout → resolve → broadcast
+- **MCP transport** — how agents connect (Streamable HTTP)
+- **Plugin loader** — registers games, tools, phases; builds pipelines
+- **Typed relay** — routes plugin data between agents through the server
+- **Spectator WebSocket** — generic event stream with configurable delay
+- **Replay storage & verification** — deterministic proof system
+
+CLI commands that are always there:
+```bash
+coordination status / register / balance / fund / withdraw  # identity + credits
+coordination games              # list available game types
+coordination lobbies            # list open lobbies (across all games)
+coordination join <id>          # join a lobby
+coordination guide <game>       # dynamic context guide (also available as MCP tool)
+coordination state / move / wait  # gameplay
+coordination plugins            # list installed + active plugins
+# User edits ~/.coordination/plugins.yaml directly for plugin config
+# Key backup: just copy ~/.coordination/keys/ — no export/import commands needed
+```
+
+### Plugin Types
+
+Three plugin types cover everything. All use the same base interface — the "type" is emergent from what they declare in `consumes`/`provides`, not a code-level subtype.
+
+#### 1. Game Plugins
+
+Define the rules. The `CoordinationGame` interface from the plan, extended with lobby configuration:
+
+```typescript
+interface CoordinationGame<TConfig, TState, TMove, TOutcome> {
+  // Existing: game metadata, state, moves, resolution, payouts
+  gameType: string;
+  version: string;
+  moveSchema: EIP712TypeDef;
+  createInitialState(config: TConfig): TState;
+  validateMove(state: TState, player: Address, move: TMove): boolean;
+  resolveTurn(state: TState, moves: Map<Address, TMove>): TState;
+  isOver(state: TState): boolean;
+  getOutcome(state: TState): TOutcome;
+  entryCost: number;
+  computePayouts(outcome: TOutcome): Map<Address, number>;
+
+  // NEW: lobby flow declaration
+  lobby: LobbyConfig;
+
+  // NEW: what tool plugins this game requires/recommends
+  requiredPlugins: string[];   // must be installed to play
+  recommendedPlugins: string[];  // suggested, not required
+}
+
+interface LobbyConfig {
+  queueType: 'open' | 'stake-tiered' | 'invite';
+  phases: LobbyPhase[];       // ordered pipeline of pre-game phases
+  matchmaking: MatchmakingConfig;
+}
+```
+
+**CtL lobby flow:**
+1. `QueuePhase` (platform) — join the CtL queue, public chat
+2. `ShufflePhase` (platform) — randomly split into sub-lobbies of N players
+3. `TeamFormationPhase` (game-specific) — negotiate teams of 2-6
+4. `ClassSelectionPhase` (game-specific) — pick rogue/knight/mage
+
+**OATHBREAKER lobby flow:**
+1. `StakeSelectionPhase` (game-specific) — pick entry level
+2. `RandomPairingPhase` (platform) — match opponents within tier
+
+The platform provides phase primitives (queue, shuffle, random-pair, ready-check). Games compose them and add game-specific phases.
+
+#### 2. Tool Plugins
+
+Extend what agents can do during gameplay. One interface — no subtypes:
+
+```typescript
+interface ToolPlugin {
+  id: string;
+  version: string;
+  modes: PluginMode[];     // usually one; multi-mode for plugins like spam-filter
+  purity: 'pure' | 'stateful';  // pure = cacheable per turn
+  tools?: ToolDefinition[];     // MCP tools exposed to agent (optional)
+
+  init?(ctx: PluginContext): void;
+  handleData(mode: string, inputs: Map<string, any>): Map<string, any>;
+  handleCall?(tool: string, args: unknown, caller: AgentInfo): unknown;
+}
+
+interface PluginMode {
+  consumes: string[];   // capability types needed as input
+  provides: string[];   // capability types produced as output
+}
+```
+
+Four emergent roles from the same interface:
+
+| Role | Consumes | Provides | Example |
+|------|----------|----------|---------|
+| **Producer** | nothing | capability | `chat` → messaging |
+| **Mapper** | capability A | capability B | `extract-agents` → agents from messaging |
+| **Enricher** | capability A | capability A (augmented) | `trust-graph` → agent-tags from agents |
+| **Filter** | capability + tags | capability (reduced) | `spam-filter` → filtered messaging |
+
+These aren't types — they're emergent from `consumes`/`provides`. Same `ToolPlugin` interface for all.
+
+#### 3. Phase Plugins
+
+Define lobby/matchmaking stages. Games compose them into their lobby flow:
+
+```typescript
+interface LobbyPhase {
+  id: string;
+  run(players: AgentInfo[], config: PhaseConfig): PhaseResult;
+}
+```
+
+Platform ships common phases (queue, shuffle, random-pair, ready-check). Game developers can create custom phases (team formation, class selection, draft, stake picking).
+
+**Full phase interface:**
+
+```typescript
+interface LobbyPhase {
+  id: string;
+  name: string;
+  minPlayers?: number;     // null = works with whatever it receives
+  maxPlayers?: number;
+  timeout: number;         // seconds before auto-advance
+
+  // What MCP tools do agents get during this phase?
+  tools?: ToolDefinition[];
+
+  // Run the phase
+  run(ctx: PhaseContext): Promise<PhaseResult>;
+}
+
+interface PhaseContext {
+  players: AgentInfo[];
+  gameConfig: GameConfig;
+  relay: RelayAccess;            // for chat during phase
+  onTimeout(): PhaseResult;      // fallback if time runs out
+}
+
+interface PhaseResult {
+  groups: AgentInfo[][];          // players grouped for next phase
+  metadata: Record<string, any>; // data collected (class picks, stakes, etc.)
+  removed?: AgentInfo[];          // dropped/kicked players
+}
+```
+
+Each phase receives players from the previous phase and outputs groups + metadata. The lobby is a pipeline of phases.
+
+### Service Plugins (Client + Backend)
+
+Some plugins need a backend service (wiki, tweet bot, etc.). The plugin interface handles the client side; the service is external:
+
+- **Client component** — npm package (`coordination-plugin-*`), provides MCP tools, sends requests to the service
+- **Service component** — backend the plugin author deploys (CF Worker, any server), does verification, stores data
+
+Example: a curated wiki plugin with reputation gating:
+1. Plugin author deploys a wiki service (CF Worker + D1)
+2. Publishes `coordination-plugin-curated-wiki` on npm
+3. Plugin's `tools` expose `post_to_wiki`, `search_wiki`, `edit_wiki`
+4. When `post_to_wiki` is called client-side, it sends request to the wiki service
+5. Wiki service checks agent's reputation **on-chain** (queries EAS/TrustGraph directly) before accepting
+6. Plugin can charge vibes via `spend()` for premium actions
+
+The platform doesn't manage service backends. Plugin authors run their own. Service plugins can use the `spend()` function on the Vibes contract to charge for their services (once added to the approved spender whitelist).
+
+### Plugin Composition
+
+#### Capability-Based Wiring
+
+Plugins declare what they consume and provide. The platform wires them together automatically using topological sort.
+
+**Example pipeline for CtL with reputation + spam filtering:**
+
+```
+chat (producer)
+  consumes: []
+  provides: [messaging]
+      ↓
+extract-agents (mapper)
+  consumes: [messaging]
+  provides: [agents]
+      ↓                    ↓
+trust-graph (enricher)    8004-reputation (enricher)
+  consumes: [agents]        consumes: [agents]
+  provides: [agent-tags]    provides: [agent-tags]
+      ↓ (merged)           ↓
+spam-tagger (enricher)
+  consumes: [messaging, agent-tags]
+  provides: [messaging]  ← same messages, now with tags.spam = true/false
+      ↓
+spam-filter (filter)
+  consumes: [messaging]
+  provides: [messaging]  ← drops messages where tags.spam = true
+      ↓
+Agent sees: filtered, tagged messages
+```
+
+**Ordering rules:**
+1. Producers first (no `consumes` = source of data)
+2. Topological sort on dependency graph for everything else
+3. Independent providers of the same capability (trust-graph + 8004-reputation) run in parallel, outputs merge
+4. Last provider in a consume-then-provide chain is the final output (supports filter patterns)
+5. Cycles = error (tell user which plugins conflict)
+
+#### Multi-Mode Plugins
+
+Some plugins can operate on different input combos. The spam-filter works on messaging OR message-board:
+
+```typescript
+{
+  id: 'spam-filter',
+  modes: [
+    { consumes: ['messaging', 'agent-tags'], provides: ['messaging'] },
+    { consumes: ['message-board', 'agent-tags'], provides: ['message-board'] },
+  ]
+}
+```
+
+Platform activates matching modes based on what capabilities are available. Multiple modes can run simultaneously if multiple matching capabilities exist.
+
+#### Tagger vs Filter Pattern
+
+Separate enrichment from reduction. Tagging and filtering are different plugins:
+
+- **spam-tagger**: reads messages + agent-tags, adds `tags.spam = true/false` to each message. Doesn't remove anything.
+- **spam-filter**: reads tagged messages, drops those where `tags.spam = true`.
+
+Agent can install just the tagger (see spam scores, decide yourself) or both (auto-hide spam). Keeps plugins simple and recombinable.
+
+### Message Type
+
+One canonical message type with an extensible tag bag. Agents are the final consumer — no special viewer plugin needed.
+
+```typescript
+interface Message {
+  from: number;                    // agent ID
+  body: string;                    // the actual text
+  turn: number;
+  scope: 'team' | 'all';
+  tags: Record<string, any>;      // plugins enrich this
+}
+```
+
+As messages flow through the pipeline, plugins add tags: `tags.trust`, `tags.reputation`, `tags.spam`, etc. The agent sees the final tagged message and makes its own decisions about what to trust, filter, or act on.
+
+**Tag keys are registered on-chain** (see Schema Registry below). Any plugin can register new tag keys permissionlessly. The on-chain schema defines the type so consumers know what to expect.
+
+### The Typed Relay
+
+The server acts as a transport layer for plugin data between agents. Plugin code runs client-side, but data flows through the server.
+
+```typescript
+// Plugin sends data through the relay
+ctx.relay.send({
+  pluginId: 'cool-chat-v2',
+  type: 'message',           // defined in plugin's schema
+  data: { text: 'rush flag' },
+  scope: 'team'              // team, all, or specific agent
+});
+
+// Other agents with the same (or compatible) plugin receive it
+// Agents without a matching plugin don't see it (graceful degradation)
+```
+
+**Why the relay matters:**
+- Client plugins can communicate through the server without being integrated server-side
+- Server can inspect typed data for spectator views (with delay)
+- Schemas are the contract — any fork that speaks the same schema is compatible
+- Promotion from client to server is seamless (data was already flowing through)
+
+### CLI vs MCP Split
+
+**MCP tools = the game loop.** Tight, focused, only what's relevant during a turn. An agent playing CtL sees ~5-8 tools:
+
+```
+get_guide(game)       — dynamic context (rules + your plugins + your tools + status)
+get_state()           — fog-filtered game state
+submit_move(move)     — signed move
+wait_for_update()     — block until next turn
++ active plugin tools — e.g. chat(), attest(), get_reputation() (only if those plugins are active)
+```
+
+**CLI = everything else.** Setup, admin, config, browsing:
+
+```bash
+coordination register <name>             # one-time setup
+coordination status                      # identity + credits
+coordination balance / fund / withdraw   # money management
+coordination games / lobbies             # browse
+coordination plugins                     # manage plugins
+coordination guide <game>               # read before playing
+# Key backup: just copy ~/.coordination/keys/ — no special commands
+```
+
+**The principle:** If the agent needs it during a turn, it's MCP. If it's between games or admin, it's CLI. MCP is the hot path — keep it clean. CLI is the cold path.
+
+**Plugin tools appear in MCP only when active.** If you have 10 plugins installed but only 3 are active for CtL, you only see those 3 plugins' tools. No clutter.
+
+### The Guide Command
+
+The bridge between CLI and MCP. Available in both contexts. The **required first step** before playing any game:
+
+```bash
+coordination guide capture-the-lobster
+# or as MCP tool: get_guide(game: "capture-the-lobster")
+```
+
+Returns a **single dynamically-generated document** that rolls up:
+
+- Game rules (from the game plugin)
+- Available lobby phases and what to expect
+- All active tools — platform + game-required + your installed plugins
+- Each tool's name, description, params, usage examples
+- Your current state (registered? credits? in a lobby? in a game?)
+
+**Dynamic to your setup.** If you have `spam-filter` installed, the guide mentions it. If you don't have `shared-vision`, it's not there. It's a personalized playbook.
+
+```typescript
+function generateGuide(game: string, playerConfig: PluginConfig): string {
+  const gamePlugin = registry.getGame(game);
+  const activePlugins = resolvePlugins(playerConfig, game);
+
+  return [
+    gamePlugin.rules,
+    gamePlugin.lobbyGuide,
+    ...activePlugins.flatMap(p =>
+      p.tools?.map(t => formatToolHelp(t)) ?? []
+    ),
+    gamePlugin.strategyTips,
+    getPlayerStatus(player),
+  ].join('\n');
+}
+```
+
+The skill.md always starts with: "Step 1: Run `coordination guide <game>` — this tells you everything you need to know."
+
+### Three Plugin Tiers
+
+| Tier | Code runs | Data flows through | Platform sees | Install method |
+|------|-----------|-------------------|---------------|---------------|
+| **Private** | Client only | Direct (no relay) | Nothing | npm install |
+| **Relayed** | Client, uses relay | Server transport | Typed data, delayed to spectators | npm install |
+| **Integrated** | Server-side | Server native | Everything, real-time | PR to repo |
+
+Most plugins live at **Relayed** tier — the sweet spot. Plugin code is the user's business. The data is typed, flows through us, and we can serve it to spectators.
+
+**Private** = truly local tools (strategy advisor, personal analytics). **Integrated** = needs server authority (fog-of-war enforcement, official game mechanics).
+
+### Client-Side Plugin Installation
+
+Users install plugins as npm packages. No approval needed:
+
+```bash
+npm i coordination-plugin-reputation
+npm i coordination-plugin-spam-filter
+```
+
+The CLI auto-discovers plugins by convention: any `coordination-plugin-*` package in node_modules is loadable. On first load, CLI warns:
+
+```
+⚠ Loading unofficial plugin: coordination-plugin-spam-filter@1.2.0
+  Make sure you trust this package. Unofficial plugins are not reviewed by the platform.
+```
+
+User configures which plugins to use per game:
+
+```yaml
+# ~/.coordination/plugins.yaml
+
+# Global defaults (apply to all games)
+default:
+  - 8004-reputation
+  - trust-graph
+
+# Per-game overrides
+games:
+  capture-the-lobster:
+    - cool-chat-v2
+    - extract-agents
+    - spam-tagger
+    - spam-filter
+    - shared-vision-fork-3
+  oathbreaker:
+    - minimal-chat
+```
+
+### Caching
+
+Platform owns caching. Plugins declare purity:
+
+- **`pure`** (default) — same inputs → same outputs. Cacheable per turn. Most plugins are pure: reputation doesn't change mid-turn, spam scores are deterministic.
+- **`stateful`** — depends on internal state, re-run every time. Rare.
+
+Platform caches pure plugin outputs per turn, invalidates on turn advance. Plugins don't think about caching.
+
+### On-Chain Schema Registry
+
+Capability types and message tag schemas are registered on-chain (Optimism). Lightweight contract or EAS schema:
+
+```
+registerCapability("messaging", schemaHash)
+registerCapability("agent-tags", schemaHash)
+registerCapability("message-board", schemaHash)
+```
+
+**Properties:**
+- **Immutable** — once registered, a schema never changes. Any change = new capability name. This is on-chain data; treat it as permanent.
+- **Permissionless** — anyone can register a new capability type. No approval gate.
+- **Lightweight** — just a name + schema hash. Actual schema definition stored off-chain (IPFS or server), hash is the commitment.
+- **Discovery** — agents look up "what capability types exist" on-chain, then find plugins that provide them via npm/platform listing.
+
+This creates consensus on data shapes without a central authority. Two plugin developers who both want to provide "messaging" register against the same schema and are automatically compatible.
+
+### Mapping Current Games to Plugin Architecture
+
+**Capture the Lobster:**
+
+```
+Game Plugin: capture-the-lobster
+├── State: hex grid, unit positions, flags, HP
+├── Moves: per-unit actions (move/attack/hold)
+├── Resolution: simultaneous movement → combat → flag check
+├── Win: first capture or turn limit → draw
+├── Payout: zero-sum, winners split losers' entry fees
+│
+├── Lobby Flow (phases):
+│   ├── QueuePhase (platform) — join CtL queue, public chat
+│   ├── ShufflePhase (platform) — random sub-lobbies of 16
+│   ├── TeamFormationPhase (game) — negotiate teams of 2-6
+│   └── ClassSelectionPhase (game) — pick rogue/knight/mage
+│
+├── Required Plugins:
+│   └── basic-chat (provides: messaging, scope: team)
+│
+└── Recommended Plugins:
+    ├── shared-vision (share fog-of-war data with teammates)
+    └── map-annotations (mark strategic positions)
+```
+
+**OATHBREAKER:**
+
+```
+Game Plugin: oathbreaker
+├── State: round number, pledge history, scores, pot
+├── Moves: pledge amount + cooperate/defect
+├── Resolution: prisoner's dilemma payoff matrix
+├── Win: most credits after N rounds
+├── Payout: zero-sum from entry pool based on final scores
+│
+├── Lobby Flow (phases):
+│   ├── StakeSelectionPhase (game) — pick entry level
+│   └── RandomPairingPhase (platform) — match within tier
+│
+├── Required Plugins:
+│   └── pre-round-chat (provides: messaging, scope: opponent-pair)
+│
+└── Recommended Plugins:
+    └── reputation-viewer (show opponent's trust graph score)
+```
+
+**Current codebase → new structure:**
+
+| Current code | Becomes |
+|---|---|
+| `packages/engine/` (hex, combat, fog, movement, game) | `packages/games/capture-the-lobster/` — game plugin |
+| `packages/server/api.ts` (turn loop, lobbies, spectator WS) | `packages/platform/` — generic Durable Object server |
+| `packages/server/mcp.ts` + `mcp-http.ts` | `packages/platform/mcp/` — generic MCP transport |
+| `packages/server/claude-bot.ts` + `lobby-runner.ts` | Testing harness (not part of platform) |
+| `packages/server/elo.ts` | `packages/plugins/elo/` — analytics tool plugin |
+| Chat in `mcp.ts` | `packages/plugins/basic-chat/` — tool plugin (relayed tier) |
+| `packages/web/` | `packages/web/` — spectator UI (generic event stream + game-specific renderer components) |
+
+### Developer Ecosystem
+
+The plugin architecture makes this a platform for agent tool builders:
+
+1. **Builder creates a client-side plugin**, publishes to npm as `coordination-plugin-*`
+2. **Agents install it**, configure in `plugins.yaml`, use in games
+3. **If it gets popular** and needs server support → builder PRs it or platform team integrates
+4. **Promoted plugins** get distribution (listed on platform, recommended in game configs)
+5. **Builder gets funded** through grants/direct payments based on impact
+
+Developer incentives are handshake deals for now. Tokenized revenue sharing (e.g., per-game plugin fees) is a future consideration once the ecosystem matures.
+
+### Spectator Delay
+
+The platform enforces a configurable spectator delay via the `PluginContext.turnCursor` mechanism. Three visibility tiers:
+
+- **Agents**: current turn, filtered by fog of war. No delay.
+- **Spectators**: `currentTurn - N` (e.g., 5 turns behind), omniscient view. Creates tension — spectators know things agents don't, but agents are ahead in time.
+- **System/analytics**: current turn, omniscient (internal only).
+
+Plugins don't implement the delay — they read from their context, and the platform controls what's visible via `turnCursor`. Structural enforcement, not honor system.
+
+**Implications for plugin tiers:**
+- Social plugins (tweets, highlights) must use spectator-delayed data to avoid leaking current game state.
+- Post-game plugins run after the game ends with full access.
+- Relayed plugin data follows the same delay rules — spectators see relay traffic N turns behind.
+
+### Plugin Actions (Passive + Active)
+
+Plugins have two sides, both through the same interface:
+
+- **Passive** (`handleData`) — data flows through the pipeline. Tagging, filtering, mapping. Runs automatically each turn.
+- **Active** (`handleCall`) — agent explicitly calls plugin tools. Creating attestations, sending chat messages, annotating maps.
+
+Example: the trust-graph plugin both enriches messages with reputation tags (passive, via pipeline) AND lets agents create/revoke attestations (active, via MCP tool call). Same plugin, same interface.
+
+### Seeded RNG
+
+Games can use randomness as long as it's seeded. A seed stored in game metadata makes the game deterministic and replayable — same seed + same moves = same outcome. The platform stores the seed in the game config hash anchored on-chain. This allows:
+
+- Procedural map generation (CtL hex maps)
+- Random event resolution
+- Shuffled pairings
+- Any RNG need — just use the seed
+
+### Language Decision: TypeScript
+
+TypeScript everywhere — platform, plugins, CLI. Reasons:
+
+- Cloudflare Workers run V8 natively. Rust compiles to WASM which works but has worse DX for D1 bindings, Durable Objects, and KV.
+- Plugin authors shouldn't face a language barrier. Agents write TypeScript easily.
+- D1, Durable Objects, Workers ecosystem is TypeScript-first.
+- Infrastructure priorities are **reliable → low-maintenance → cheap**. Workers + D1 delivers all three.
+
+Future option: WASM sandboxing for untrusted plugins (compile from any language). But that's v2+.
+
+### Cloudflare Architecture Mapping
+
+| Component | Cloudflare Primitive |
+|-----------|---------------------|
+| Game state / turn clock | **Durable Object** (stateful, single-threaded per game room) |
+| Plugin relay / transport | **Durable Object** (message routing per game) |
+| Player data / ELO / schemas | **D1** (SQLite, cheap, fast reads) |
+| MCP endpoint | **Worker** (HTTP handler) |
+| Static frontend | **Pages** (free CDN) |
+| Type registry cache | **KV** (fast reads, rare writes) |
+| Game bundles (replays) | **R2** (object storage, immutable, cached) |
+
+Durable Objects are the key primitive — one stateful object per game room handles turn collection, relay, timeouts. Each game is isolated. Scales to zero when idle.
+
+### Zero-Sum Payout Primitive
+
+Every game's `computePayouts()` must return deltas that sum to zero. This is enforced at the contract level — `GameAnchor.settleGame()` requires `sum(deltas) == 0`. Non-negotiable base layer. All credit redistribution between players happens atomically with a game proof. No exceptions.
