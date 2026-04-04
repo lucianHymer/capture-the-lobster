@@ -14,7 +14,7 @@ import {
   LobbyManager,
   LobbyAgent,
   UnitClass,
-} from '@lobster/engine';
+} from '@lobster/games-ctl';
 
 // ---------------------------------------------------------------------------
 // Types

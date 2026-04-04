@@ -25,7 +25,7 @@ import {
   LobbyManager as EngineLobbyManager,
   getMapRadiusForTeamSize,
   getTurnLimitForRadius,
-} from '@lobster/engine';
+} from '@lobster/games-ctl';
 import { EloTracker } from './elo.js';
 import { runAllBotsTurn, createBotSessions, BotSession } from './claude-bot.js';
 import { LobbyRunner, LobbyRunnerState } from './lobby-runner.js';
@@ -37,7 +37,7 @@ import {
   getAgentName,
 } from './mcp-http.js';
 import { createRelayRouter } from './relay.js';
-import { buildResultFromGameManager, computePayoutsFromGameManager } from './coordination.js';
+import { buildResultFromGameManager, computePayoutsFromGameManager, getFramework } from './coordination.js';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -505,7 +505,6 @@ export class GameServer {
 
     // GET /framework — coordination framework info (available games, version)
     router.get('/framework', (_req, res) => {
-      const { getFramework } = require('./coordination.js');
       try {
         const fw = getFramework();
         res.json({

@@ -8,7 +8,7 @@ import {
   GameManager,
   Direction,
   UnitClass,
-} from '@lobster/engine';
+} from '@lobster/games-ctl';
 
 const VALID_DIRECTIONS: Direction[] = ['N', 'NE', 'SE', 'S', 'SW', 'NW'];
 

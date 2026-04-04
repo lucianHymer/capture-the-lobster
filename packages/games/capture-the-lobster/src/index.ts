@@ -9,3 +9,5 @@ export * from './movement.js';
 export * from './game.js';
 export * from './lobby.js';
 export * from './plugin.js';
+export { TeamFormationPhase } from './phases/team-formation.js';
+export { ClassSelectionPhase } from './phases/class-selection.js';

@@ -11,7 +11,7 @@ import {
   CLASS_SPEED,
   beats,
   TurnRecord,
-} from '@lobster/engine';
+} from '@lobster/games-ctl';
 
 // ---------------------------------------------------------------------------
 // Bot interface

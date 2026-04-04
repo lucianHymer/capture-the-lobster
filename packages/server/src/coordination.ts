@@ -20,7 +20,7 @@ import {
   computePayouts,
   buildGameMerkleTree,
   type MerkleLeafData,
-} from '@lobster/coordination';
+} from '@lobster/platform';
 
 import {
   CaptureTheLobsterPlugin,
@@ -31,7 +31,7 @@ import {
   GameManager,
   TurnRecord,
   Direction,
-} from '@lobster/engine';
+} from '@lobster/games-ctl';
 
 // ---------------------------------------------------------------------------
 // Framework singleton

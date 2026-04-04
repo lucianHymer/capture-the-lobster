@@ -12,9 +12,9 @@ import {
   LobbyPipeline,
   getAvailableTools,
   generateGuide,
-} from '@lobster/coordination';
-import type { ToolPlugin, AgentInfo } from '@lobster/coordination';
-import { CaptureTheLobsterPlugin, TeamFormationPhase, ClassSelectionPhase } from '@lobster/engine';
+} from '@lobster/platform';
+import type { ToolPlugin, AgentInfo } from '@lobster/platform';
+import { CaptureTheLobsterPlugin, TeamFormationPhase, ClassSelectionPhase } from '@lobster/games-ctl';
 import { createBasicChatPlugin, setPhase, setTeams, getNewMessages } from '@lobster/plugin-chat';
 import { createEloPlugin } from '@lobster/plugin-elo';
 

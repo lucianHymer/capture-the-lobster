@@ -11,8 +11,8 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
-import { GameManager, Direction, UnitClass } from '@lobster/engine';
-import { LobbyManager as EngineLobbyManager } from '@lobster/engine';
+import { GameManager, Direction, UnitClass } from '@lobster/games-ctl';
+import { LobbyManager as EngineLobbyManager } from '@lobster/games-ctl';
 import crypto from 'node:crypto';
 
 // ---------------------------------------------------------------------------
