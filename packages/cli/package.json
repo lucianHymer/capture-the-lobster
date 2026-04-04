@@ -24,7 +24,9 @@
   "dependencies": {
     "commander": "^12.0.0",
     "ethers": "^6.13.0",
-    "@modelcontextprotocol/sdk": "^1.0.0"
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "@lobster/platform": "*",
+    "@lobster/plugin-chat": "*"
   },
   "devDependencies": {
     "@types/node": "^22.19.15",

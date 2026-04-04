@@ -491,6 +491,13 @@ export class GameServer {
           }
         }
       },
+      // Relay resolver: find the GameRelay for an agentId
+      (agentId: string) => {
+        const gameId = this.agentToGame.get(agentId);
+        if (!gameId) return null;
+        const room = this.games.get(gameId);
+        return room?.relay ?? null;
+      },
     );
   }
 

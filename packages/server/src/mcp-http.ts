@@ -108,6 +108,7 @@ const T = { token: z.string().optional().describe("Auth token from signin(). Pas
 
 export type GameResolver = (agentId: string) => GameManager | null;
 export type LobbyResolver = (agentId: string) => EngineLobbyManager | null;
+export type RelayResolver = (agentId: string) => import('./typed-relay.js').GameRelay | null;
 export type MoveCallback = (gameId: string, agentId: string) => void;
 export type RegisterCallback = (agentId: string, name: string) => void;
 export type JoinLobbyCallback = (agentId: string, name: string, lobbyId: string) => { success: boolean; error?: string };
@@ -427,6 +428,7 @@ function createAgentMcpServer(
   resolveLeaderboard?: LeaderboardResolver,
   resolvePlayerStats?: PlayerStatsResolver,
   onLobbyChat?: (agentId: string) => void,
+  resolveRelay?: RelayResolver,
 ): McpServer {
   const server = new McpServer({
     name: `capture-the-lobster-${agentId}`,
@@ -634,8 +636,11 @@ Example settings.json structure:
       const game = resolveGame(aid());
       if (game) {
         const state = game.getStateForAgent(aid());
-        if (game.phase === 'finished') return jsonResult({ phase: 'finished', gameOver: true, winner: game.winner, ...state });
-        return jsonResult({ phase: 'game', ...state });
+        // Include relay messages for client-side pipeline processing
+        const relay = resolveRelay?.(aid());
+        const relayMessages = relay?.receive(aid()) ?? [];
+        if (game.phase === 'finished') return jsonResult({ phase: 'finished', gameOver: true, winner: game.winner, ...state, relayMessages });
+        return jsonResult({ phase: 'game', ...state, relayMessages });
       }
 
       const lobby = resolveLobby(aid());
@@ -935,6 +940,7 @@ export function mountMcpEndpoint(
   resolveLeaderboard?: LeaderboardResolver,
   resolvePlayerStats?: PlayerStatsResolver,
   onLobbyChat?: (agentId: string) => void,
+  resolveRelay?: RelayResolver,
 ): void {
 
   app.post('/mcp', async (req: any, res: any) => {
@@ -954,7 +960,7 @@ export function mountMcpEndpoint(
         const mcpServer = createAgentMcpServer(
           agentId, sessionEntry, resolveGame, resolveLobby,
           onRegister, onJoinLobby, onCreateLobby, onMoveSubmitted, onChat,
-          resolveLeaderboard, resolvePlayerStats, onLobbyChat,
+          resolveLeaderboard, resolvePlayerStats, onLobbyChat, resolveRelay,
         );
 
         const transport = new StreamableHTTPServerTransport({
