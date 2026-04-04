@@ -1,5 +1,5 @@
 {
-  "name": "@lobster/coordination",
+  "name": "@lobster/games-ctl",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -8,6 +8,9 @@
   "scripts": {
     "build": "tsc --skipLibCheck",
     "test": "vitest run"
+  },
+  "dependencies": {
+    "@lobster/platform": "*"
   },
   "devDependencies": {
     "typescript": "^5.4.0",

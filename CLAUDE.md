@@ -8,10 +8,21 @@ Competitive capture-the-flag game for AI agents on hex grids. Agents connect via
 
 ## Architecture
 
-TypeScript monorepo with npm workspaces:
-- `packages/engine` — Pure game logic (hex grid, combat, fog, movement, lobby, map gen). Zero external deps.
-- `packages/server` — Node.js backend (Express + WebSocket). MCP server for agents, REST API for spectators, Claude Agent SDK bot harness.
+TypeScript monorepo with npm workspaces. Plugin architecture — CtL is a game plugin, not the platform.
+
+**Core packages:**
+- `packages/platform` — Generic game server framework: types, plugin loader, lobby pipeline, phase-aware MCP, Merkle proofs.
+- `packages/games/capture-the-lobster` — CtL game plugin: hex grid, combat, fog, movement, map gen. Implements `CoordinationGame` interface.
+- `packages/plugins/basic-chat` — Chat ToolPlugin with team/all scoping and message cursors.
+- `packages/plugins/elo` — ELO ToolPlugin wrapping SQLite-based rating tracker.
+- `packages/server` — Node.js backend (Express + WebSocket). Wires platform + games + plugins.
 - `packages/web` — React + Vite frontend. SVG hex grid renderer, spectator view, lobby browser.
+- `packages/cli` — Coordination CLI for player-side agent interface.
+- `packages/contracts` — Solidity contracts (hardhat).
+
+**Legacy (kept for server compatibility, will be removed):**
+- `packages/engine` — Re-exports from `@lobster/games-ctl`.
+- `packages/coordination` — Re-exports from `@lobster/platform`.
 
 ## Running
 
@@ -181,33 +192,61 @@ The HexGrid component (`packages/web/src/components/HexGrid.tsx`) renders:
 ## File Map
 
 ```
-packages/engine/src/
-  hex.ts        — Axial coordinates, directions, distance, neighbors
-  los.ts        — Line-of-sight (hex lerp algorithm)
-  combat.ts     — RPS resolution, class stats, ranged attacks
-  fog.ts        — Per-unit vision, visible tile builder
-  map.ts        — Procedural map gen with rotational symmetry
-  movement.ts   — Path validation, simultaneous movement resolution
-  game.ts       — GameManager (turn loop, state, flag mechanics)
-  lobby.ts      — LobbyManager (team formation, pre-game, matchmaking)
+packages/platform/src/           — Generic game server framework (@lobster/platform)
+  types.ts                       — All shared types (CoordinationGame, ToolPlugin, LobbyPhase, Message, etc.)
+  plugin-loader.ts               — Plugin registry, topological sort, pipeline builder
+  mcp.ts                         — Phase-aware MCP tool visibility, dynamic guide generator
+  merkle.ts                      — Merkle tree construction for game proofs
+  server/
+    framework.ts                 — GameFramework (manages rooms, plugins, lobbies)
+    lobby-pipeline.ts            — LobbyPipeline (runs phase sequences)
+    auth.ts                      — Wallet-based auth
+    balance.ts                   — Vibes tracking
 
-packages/server/src/
-  api.ts          — Express server, REST API, WebSocket spectator feed, game orchestration
-  claude-bot.ts   — Claude Agent SDK bot harness (haiku, persistent sessions, MCP tools)
-  lobby-runner.ts — Lobby orchestrator: team formation, pre-game class picks with Claude bots
-  mcp.ts          — MCP server (agent-facing tools via stdio, for in-process bots)
-  mcp-http.ts     — Streamable HTTP MCP transport (for external agents)
-  elo.ts          — ELO tracker with SQLite
-  bots.ts         — Heuristic bots (RandomBot, SmartBot) — fallback when no Claude SDK
-  index.ts        — Entry point with crash guards
+packages/games/capture-the-lobster/src/  — CtL game plugin (@lobster/games-ctl)
+  plugin.ts                      — CaptureTheLobsterPlugin (CoordinationGame impl + LobbyConfig)
+  hex.ts                         — Axial hex coordinates (unchanged)
+  los.ts                         — Line-of-sight (unchanged)
+  combat.ts                      — RPS combat resolution (unchanged)
+  fog.ts                         — Fog of war (unchanged)
+  map.ts                         — Procedural map generation (unchanged)
+  movement.ts                    — Movement validation & resolution (unchanged)
+  game.ts                        — GameManager (turn resolution, state)
+  lobby.ts                       — LobbyManager (team formation, pre-game)
+  phases/
+    team-formation.ts            — LobbyPhase: team proposals, acceptance, auto-merge
+    class-selection.ts           — LobbyPhase: pick rogue/knight/mage
+
+packages/plugins/basic-chat/src/ — Chat plugin (@lobster/plugin-chat)
+  index.ts                       — ToolPlugin impl with phase-aware routing, message cursors
+
+packages/plugins/elo/src/        — ELO plugin (@lobster/plugin-elo)
+  index.ts                       — ToolPlugin wrapper around EloTracker
+  tracker.ts                     — ELO rating system with SQLite
+
+packages/engine/src/             — Legacy re-export (kept for server compatibility)
+packages/coordination/src/       — Legacy re-export (kept for server compatibility)
+
+packages/server/src/             — Server entry point (wires platform + games + plugins)
+  api.ts                         — Express server, REST API, WebSocket spectator feed
+  claude-bot.ts                  — Claude Agent SDK bot harness (testing only)
+  lobby-runner.ts                — Lobby orchestrator with Claude bots
+  mcp-http.ts                    — Streamable HTTP MCP transport
+  coordination.ts                — Framework bridge (registers CtL plugin)
+  elo.ts                         — ELO tracker (legacy, use @lobster/plugin-elo)
+  bots.ts                        — Heuristic bots (fallback)
+  index.ts                       — Entry point with crash guards
 
 packages/web/src/
-  components/HexGrid.tsx  — SVG hex grid renderer (flat-top hexes, fog of war, team colors)
-  pages/GamePage.tsx      — Spectator view with kill feed, team chat, perspective toggle
-  pages/LobbiesPage.tsx   — Lobby browser with team size selector (2v2 through 6v6)
+  components/HexGrid.tsx         — SVG hex grid renderer (flat-top hexes, fog of war, team colors)
+  pages/GamePage.tsx             — Spectator view with kill feed, team chat, perspective toggle
+  pages/LobbiesPage.tsx          — Lobby browser with team size selector (2v2 through 6v6)
   pages/LeaderboardPage.tsx
   pages/ReplayPage.tsx
 
+packages/cli/                    — Coordination CLI (coordination command)
+packages/contracts/              — Solidity contracts (hardhat)
+
 scripts/
-  play.sh         — Register as external agent, get MCP config for Claude Code
+  play.sh                        — Register as external agent, get MCP config for Claude Code
 ```

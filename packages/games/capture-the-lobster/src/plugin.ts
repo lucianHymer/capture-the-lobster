@@ -2,7 +2,7 @@
  * Capture the Lobster — CoordinationGame plugin implementation.
  *
  * Wraps the existing game engine (hex, combat, fog, movement, map, game.ts)
- * to implement the shared CoordinationGame interface from @lobster/coordination.
+ * to implement the shared CoordinationGame interface from @lobster/platform.
  *
  * This allows CtL to be registered as a game plugin in the coordination
  * framework while keeping all existing game logic untouched.
@@ -12,7 +12,7 @@ import type {
   CoordinationGame,
   EIP712TypeDef,
   GameLobbyConfig,
-} from '@lobster/coordination';
+} from '@lobster/platform';
 
 import { GameManager, GameConfig, GameUnit, FlagState, TurnRecord } from './game.js';
 import { generateMap, GameMap, MapConfig } from './map.js';

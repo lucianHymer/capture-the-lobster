@@ -1,6 +1,6 @@
 # Plugin Architecture Refactor — Execution Plan
 
-**Status:** Plan only — do not execute until Lucian reviews.
+**Status:** EXECUTED — All 10 phases complete. See commit history for details.
 **Goal:** CtL becomes just a plugin (a few files). The platform is a generic game engine. Everything uses the plugin pipeline. End-to-end testable.
 
 ---
