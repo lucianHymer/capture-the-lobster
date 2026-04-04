@@ -937,7 +937,12 @@ export class GameServer {
     const state = getDelayedState(room);
     if (!state) return;
 
-    const msg = JSON.stringify({ type: 'state_update', data: state });
+    // Include delayed relay messages for spectators (they see everything, with delay)
+    const delayedTurn = room.game.turn - room.spectatorDelay;
+    const relayMessages = room.relay.getSpectatorMessages(Math.max(0, delayedTurn));
+    const stateWithRelay = { ...state, relayMessages };
+
+    const msg = JSON.stringify({ type: 'state_update', data: stateWithRelay });
     for (const ws of room.spectators) {
       if (ws.readyState === WebSocket.OPEN) {
         ws.send(msg);
