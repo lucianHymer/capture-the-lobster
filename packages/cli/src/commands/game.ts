@@ -2,11 +2,9 @@ import { Command } from "commander";
 import { loadConfig, loadSession, saveSession } from "../config.js";
 import { ApiClient } from "../api-client.js";
 import { McpClient } from "../mcp-client.js";
+import { processState, initPipeline } from "../pipeline.js";
+import { formatChatMessage } from "@lobster/plugin-chat";
 
-/**
- * Get or create an MCP client, ensuring we have a valid session + token.
- * If no token exists, prompts the user to run `coga signin` first.
- */
 function getMcpClient(config: { serverUrl: string }): McpClient {
   return new McpClient(config.serverUrl);
 }
@@ -104,7 +102,6 @@ export function registerGameCommands(program: Command) {
         process.stdout.write(`\n  Lobby created: ${lobbyId}\n`);
         process.stdout.write(`  Team size: ${teamSize}v${teamSize}\n\n`);
 
-        // Save lobby ID to session
         const session = loadSession();
         session.currentLobbyId = lobbyId;
         saveSession(session);
@@ -138,12 +135,8 @@ export function registerGameCommands(program: Command) {
         if (result.phase) {
           process.stdout.write(`  Phase: ${result.phase}\n`);
         }
-        if (result.agentCount) {
-          process.stdout.write(`  Agents in lobby: ${result.agentCount}\n`);
-        }
         process.stdout.write(`\n`);
 
-        // Save lobby ID to session
         const session = loadSession();
         session.currentLobbyId = lobbyId;
         saveSession(session);
@@ -153,31 +146,72 @@ export function registerGameCommands(program: Command) {
       }
     });
 
-  // ==================== state ====================
+  // ==================== guide ====================
   program
-    .command("state")
-    .description("Get current game/lobby state")
-    .action(async () => {
+    .command("guide [game]")
+    .description("Dynamic playbook — game rules, your plugins, available actions")
+    .action(async (game?: string) => {
       const config = loadConfig();
       const token = requireToken();
       const mcp = getMcpClient(config);
 
       try {
-        const result = await mcp.callTool("get_state", { token });
+        const result = await mcp.callTool("get_guide", {
+          token,
+          ...(game ? { game } : {}),
+        });
 
         if (result.error) {
           process.stderr.write(`  Error: ${result.error}\n`);
           process.exit(1);
         }
 
+        process.stdout.write(typeof result === "string" ? result : JSON.stringify(result, null, 2));
+        process.stdout.write("\n");
+      } catch (err: any) {
+        process.stderr.write(`  Error: ${err.message}\n`);
+        process.exit(1);
+      }
+    });
+
+  // ==================== state ====================
+  program
+    .command("state")
+    .description("Get current game/lobby state (processed through your plugin pipeline)")
+    .action(async () => {
+      const config = loadConfig();
+      const token = requireToken();
+      const mcp = getMcpClient(config);
+
+      try {
+        const rawResult = await mcp.callTool("get_state", { token });
+
+        if (rawResult.error) {
+          process.stderr.write(`  Error: ${rawResult.error}\n`);
+          process.exit(1);
+        }
+
         // Track game ID if present
-        if (result.gameId) {
+        if (rawResult.gameId) {
           const session = loadSession();
-          session.currentGameId = result.gameId;
+          session.currentGameId = rawResult.gameId;
           saveSession(session);
         }
 
-        process.stdout.write(JSON.stringify(result, null, 2) + "\n");
+        // Run client-side pipeline over relay messages
+        const processed = processState({
+          gameState: rawResult,
+          relayMessages: rawResult.relayMessages ?? [],
+        });
+
+        // Output: game state + pipeline-processed messages
+        const output: any = { ...rawResult };
+        delete output.relayMessages; // remove raw relay data
+        if (processed.messages.length > 0) {
+          output.messages = processed.messages;
+        }
+
+        process.stdout.write(JSON.stringify(output, null, 2) + "\n");
       } catch (err: any) {
         process.stderr.write(`  Error: ${err.message}\n`);
         process.exit(1);
@@ -186,46 +220,44 @@ export function registerGameCommands(program: Command) {
 
   // ==================== move ====================
   program
-    .command("move <path>")
+    .command("move <data>")
     .description(
-      'Submit a move (JSON array of directions, e.g. \'["N","NE"]\')'
+      'Submit an action for the current phase. During gameplay: \'["N","NE"]\' (directions). During lobby phases: \'{"action":"propose-team","target":"agent123"}\''
     )
-    .action(async (pathStr: string) => {
+    .action(async (dataStr: string) => {
       const config = loadConfig();
       const token = requireToken();
       const mcp = getMcpClient(config);
 
       try {
-        let movePath: string[];
+        let moveData: any;
         try {
-          movePath = JSON.parse(pathStr);
-          if (!Array.isArray(movePath)) {
-            throw new Error("not an array");
-          }
+          moveData = JSON.parse(dataStr);
         } catch {
           process.stderr.write(
-            `  Error: Invalid path. Must be a JSON array of directions, e.g. '["N","NE"]'\n`
+            `  Error: Invalid JSON. Examples:\n` +
+            `    Gameplay:  coga move '["N","NE"]'\n` +
+            `    Lobby:     coga move '{"action":"propose-team","target":"agent1"}'\n`
           );
           process.exit(1);
           return;
         }
 
-        const result = await mcp.callTool("submit_move", {
-          token,
-          path: movePath,
-        });
+        // If it's an array, treat as direction path (gameplay move)
+        const toolArgs = Array.isArray(moveData)
+          ? { token, path: moveData }
+          : { token, ...moveData };
+
+        const result = await mcp.callTool("submit_move", toolArgs);
 
         if (result.error) {
           process.stderr.write(`  Error: ${result.error}\n`);
           process.exit(1);
         }
 
-        process.stdout.write(`\n  Move submitted: ${JSON.stringify(movePath)}\n`);
+        process.stdout.write(`\n  Action submitted.\n`);
         if (result.turn !== undefined) {
           process.stdout.write(`  Turn: ${result.turn}\n`);
-        }
-        if (result.moveSubmitted !== undefined) {
-          process.stdout.write(`  Move recorded: ${result.moveSubmitted}\n`);
         }
         process.stdout.write(`\n`);
       } catch (err: any) {
@@ -245,21 +277,33 @@ export function registerGameCommands(program: Command) {
 
       try {
         process.stdout.write("  Waiting for update...\n");
-        const result = await mcp.callTool("wait_for_update", { token });
+        const rawResult = await mcp.callTool("wait_for_update", { token });
 
-        if (result.error) {
-          process.stderr.write(`  Error: ${result.error}\n`);
+        if (rawResult.error) {
+          process.stderr.write(`  Error: ${rawResult.error}\n`);
           process.exit(1);
         }
 
         // Track game ID if present
-        if (result.gameId) {
+        if (rawResult.gameId) {
           const session = loadSession();
-          session.currentGameId = result.gameId;
+          session.currentGameId = rawResult.gameId;
           saveSession(session);
         }
 
-        process.stdout.write(JSON.stringify(result, null, 2) + "\n");
+        // Run pipeline over relay messages
+        const processed = processState({
+          gameState: rawResult,
+          relayMessages: rawResult.relayMessages ?? [],
+        });
+
+        const output: any = { ...rawResult };
+        delete output.relayMessages;
+        if (processed.messages.length > 0) {
+          output.messages = processed.messages;
+        }
+
+        process.stdout.write(JSON.stringify(output, null, 2) + "\n");
       } catch (err: any) {
         process.stderr.write(`  Error: ${err.message}\n`);
         process.exit(1);
@@ -269,13 +313,16 @@ export function registerGameCommands(program: Command) {
   // ==================== chat ====================
   program
     .command("chat <message>")
-    .description("Send a message to team/lobby chat")
+    .description("Send a message (team chat during game, all chat in lobby)")
     .action(async (message: string) => {
       const config = loadConfig();
       const token = requireToken();
       const mcp = getMcpClient(config);
 
       try {
+        // Use the chat plugin to format the relay message
+        // For now, we send through the MCP chat tool (which pushes to relay)
+        // TODO: Once fully relay-native, send directly to relay endpoint
         const result = await mcp.callTool("chat", { token, message });
 
         if (result.error) {
@@ -283,106 +330,51 @@ export function registerGameCommands(program: Command) {
           process.exit(1);
         }
 
-        process.stdout.write(`\n  Message sent.\n`);
-        if (result.newMessages && result.newMessages.length > 0) {
-          process.stdout.write(`  New messages:\n`);
-          for (const msg of result.newMessages) {
-            process.stdout.write(`    [${msg.from}]: ${msg.message}\n`);
+        process.stdout.write(`  Message sent.\n`);
+      } catch (err: any) {
+        process.stderr.write(`  Error: ${err.message}\n`);
+        process.exit(1);
+      }
+    });
+
+  // ==================== tool ====================
+  program
+    .command("tool <name> [args...]")
+    .description("Invoke a plugin tool (e.g. coga tool attest wolfpack7 85)")
+    .action(async (name: string, args: string[]) => {
+      const config = loadConfig();
+      const token = requireToken();
+      const mcp = getMcpClient(config);
+
+      try {
+        // Parse args as key=value pairs or positional args
+        const toolArgs: Record<string, any> = { token };
+
+        for (const arg of args) {
+          if (arg.includes("=")) {
+            const [key, ...rest] = arg.split("=");
+            const value = rest.join("=");
+            // Try to parse as JSON, fall back to string
+            try {
+              toolArgs[key] = JSON.parse(value);
+            } catch {
+              toolArgs[key] = value;
+            }
+          } else {
+            // Positional args: store as _args array
+            if (!toolArgs._args) toolArgs._args = [];
+            toolArgs._args.push(arg);
           }
         }
-        process.stdout.write(`\n`);
-      } catch (err: any) {
-        process.stderr.write(`  Error: ${err.message}\n`);
-        process.exit(1);
-      }
-    });
 
-  // ==================== propose-team ====================
-  program
-    .command("propose-team <agentId>")
-    .description("Invite another agent to form a team")
-    .action(async (targetAgentId: string) => {
-      const config = loadConfig();
-      const token = requireToken();
-      const mcp = getMcpClient(config);
-
-      try {
-        const result = await mcp.callTool("propose_team", {
-          token,
-          agentId: targetAgentId,
-        });
+        const result = await mcp.callTool(name, toolArgs);
 
         if (result.error) {
           process.stderr.write(`  Error: ${result.error}\n`);
           process.exit(1);
         }
 
-        process.stdout.write(`\n  Team proposal sent.\n`);
-        if (result.teamId) {
-          process.stdout.write(`  Team ID: ${result.teamId}\n`);
-        }
-        if (result.message) {
-          process.stdout.write(`  ${result.message}\n`);
-        }
-        process.stdout.write(`\n`);
-      } catch (err: any) {
-        process.stderr.write(`  Error: ${err.message}\n`);
-        process.exit(1);
-      }
-    });
-
-  // ==================== accept-team ====================
-  program
-    .command("accept-team <teamId>")
-    .description("Accept a team invitation")
-    .action(async (teamId: string) => {
-      const config = loadConfig();
-      const token = requireToken();
-      const mcp = getMcpClient(config);
-
-      try {
-        const result = await mcp.callTool("accept_team", { token, teamId });
-
-        if (result.error) {
-          process.stderr.write(`  Error: ${result.error}\n`);
-          process.exit(1);
-        }
-
-        process.stdout.write(`\n  Joined team ${teamId}\n\n`);
-      } catch (err: any) {
-        process.stderr.write(`  Error: ${err.message}\n`);
-        process.exit(1);
-      }
-    });
-
-  // ==================== choose-class ====================
-  program
-    .command("choose-class <class>")
-    .description("Choose your unit class: rogue, knight, or mage")
-    .action(async (unitClass: string) => {
-      const config = loadConfig();
-      const token = requireToken();
-      const mcp = getMcpClient(config);
-
-      if (!["rogue", "knight", "mage"].includes(unitClass)) {
-        process.stderr.write(
-          `  Error: Invalid class "${unitClass}". Choose: rogue, knight, or mage\n`
-        );
-        process.exit(1);
-      }
-
-      try {
-        const result = await mcp.callTool("choose_class", {
-          token,
-          class: unitClass,
-        });
-
-        if (result.error) {
-          process.stderr.write(`  Error: ${result.error}\n`);
-          process.exit(1);
-        }
-
-        process.stdout.write(`\n  Class selected: ${unitClass}\n\n`);
+        process.stdout.write(JSON.stringify(result, null, 2) + "\n");
       } catch (err: any) {
         process.stderr.write(`  Error: ${err.message}\n`);
         process.exit(1);
@@ -392,7 +384,7 @@ export function registerGameCommands(program: Command) {
   // ==================== session ====================
   program
     .command("session")
-    .description("Show current session info (token, agent ID, lobby/game)")
+    .description("Show current session info")
     .action(async () => {
       const session = loadSession();
 
@@ -411,9 +403,6 @@ export function registerGameCommands(program: Command) {
       );
       process.stdout.write(
         `  Game:      ${session.currentGameId || "(none)"}\n`
-      );
-      process.stdout.write(
-        `  MCP Session: ${session.mcpSessionId ? session.mcpSessionId.slice(0, 8) + "..." : "(none)"}\n`
       );
       process.stdout.write(`\n`);
     });
