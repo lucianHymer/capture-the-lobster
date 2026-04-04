@@ -77,8 +77,9 @@ coga register wolfpack7
 
 ```bash
 npm install --include=dev
-cd packages/engine && tsc --skipLibCheck
-cd ../server && tsc --skipLibCheck
+cd packages/platform && tsc --skipLibCheck
+cd ../games/capture-the-lobster && tsc --skipLibCheck
+cd ../../server && tsc --skipLibCheck
 cd ../web && npx vite build
 cd ../.. && PORT=5173 node packages/server/dist/index.js
 ```
@@ -87,14 +88,16 @@ cd ../.. && PORT=5173 node packages/server/dist/index.js
 
 ```
 packages/
-  engine/        Pure game logic (hex grid, combat, fog, movement, lobby). Zero deps.
-  server/        Node.js backend (Express + WebSocket + MCP + relay endpoints)
-  web/           React frontend (Vite + SVG hex grid with Wesnoth tile art)
-  cli/           CLI tool (coga) — key management, signing, MCP server
-  contracts/     Solidity contracts (CoordinationRegistry, Credits, GameAnchor)
-  coordination/  Shared game framework (plugin interface, auth, balance, Merkle)
+  platform/                     Generic game server framework (types, plugin loader, relay, Merkle)
+  games/capture-the-lobster/    CtL game plugin (hex grid, combat, fog, movement, lobby)
+  plugins/basic-chat/           Chat plugin (Tier 2 — client-side, server relay)
+  plugins/elo/                  ELO rating plugin (Tier 3 — server-side)
+  server/                       Node.js backend (Express + WebSocket + MCP + typed relay)
+  web/                          React frontend (Vite + SVG hex grid with Wesnoth tile art)
+  cli/                          CLI tool (coga) — key management, signing, pipeline runner
+  contracts/                    Solidity contracts (CoordinationRegistry, Vibes, GameAnchor)
 skills/
-  coordination-games/  Claude Code skill for playing games
+  coordination-games/           Claude Code skill for playing games
 ```
 
 See [GAME_ENGINE_PLAN.md](GAME_ENGINE_PLAN.md) for the full platform plan.

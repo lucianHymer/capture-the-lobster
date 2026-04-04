@@ -25,18 +25,15 @@ TypeScript monorepo with npm workspaces. Plugin architecture — CtL is a game p
 - `packages/cli` — Coordination CLI for player-side agent interface.
 - `packages/contracts` — Solidity contracts (hardhat).
 
-**Legacy (kept for server compatibility, will be removed):**
-- `packages/engine` — Re-exports from `@lobster/games-ctl`.
-- `packages/coordination` — Re-exports from `@lobster/platform`.
-
 ## Running
 
 ```bash
 # Install (MUST use --include=dev due to npm workspaces bug)
 npm install --include=dev
 
-# Build engine first (server depends on it)
-cd packages/engine && tsc --skipLibCheck
+# Build (order matters: platform first, then game, then server)
+cd packages/platform && tsc --skipLibCheck
+cd packages/games/capture-the-lobster && tsc --skipLibCheck
 cd packages/server && tsc --skipLibCheck
 cd packages/web && npx vite build
 
