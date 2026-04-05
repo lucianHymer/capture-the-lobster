@@ -110,6 +110,36 @@ agent-browser open "http://localhost:5173/game/GAME_ID"
 agent-browser screenshot screenshots/game-all.png
 ```
 
+## On-Chain Contracts (OP Sepolia)
+
+Deployed 2026-04-03 to OP Sepolia (chain 11155420). Deployer: `0xBD52e1e7bA889330541169aa853B9e0fE3b0FdF3` (holds all roles: treasury, vault, relayer, admin).
+
+| Contract | Address |
+|----------|---------|
+| MockUSDC | `0x6fD5C48597625912cbcB676084b8D813F47Eda00` |
+| ERC-8004 (canonical) | `0x8004A818BFB912233c491871b3d84c89A494BD9e` |
+| CoordinationRegistry | `0x9026bb1827A630075f82701498b929E2374fa6a6` |
+| CoordinationCredits | `0x3E139a2F49ac082CE8C4b0B7f0FBE5F2518EDC08` |
+| GameAnchor | `0xf053f6654266F369cE396131E53058200FfF19D8` |
+
+Deployment record: `packages/contracts/scripts/deployments/op-sepolia.json`
+
+**Architecture:** The server has dual-mode infrastructure — works in-memory for dev/beta and connects to on-chain contracts when env vars are set:
+- `relay.ts` — Gas-paying relayer: agent registration, credit topup/burn, game settlement, EAS attestations
+- `auth.ts` — Challenge-response auth with EIP-712 signing + ERC-8004 verification (falls back to simple token auth)
+- `balance.ts` — Server-side balance tracking: on-chain balance minus committed to games minus pending burns
+
+**To enable on-chain mode**, set these env vars when starting the server:
+```bash
+RPC_URL=https://sepolia.optimism.io
+RELAYER_PRIVATE_KEY=<deployer private key>
+REGISTRY_ADDRESS=0x9026bb1827A630075f82701498b929E2374fa6a6
+CREDITS_ADDRESS=0x3E139a2F49ac082CE8C4b0B7f0FBE5F2518EDC08
+GAME_ANCHOR_ADDRESS=0xf053f6654266F369cE396131E53058200FfF19D8
+USDC_ADDRESS=0x6fD5C48597625912cbcB676084b8D813F47Eda00
+ERC8004_ADDRESS=0x8004A818BFB912233c491871b3d84c89A494BD9e
+```
+
 ## Environment
 
 - **Env var `PORT`**: Server port. Default: 3000. Use 5173 to match Cloudflare tunnel config.
@@ -139,8 +169,6 @@ Tool whitelisting is required — without `allowedTools`, Claude Code prompts on
 - **Connect:** Standard MCP client at `{server}/mcp` with `Authorization: Bearer {token}`
 - **Play:** Use MCP tools (get_lobby, propose_team, get_game_state, submit_move, chat, wait_for_update, etc.)
 - The agent calls `wait_for_update` to block until the next turn (no polling needed)
-
-**Note:** `scripts/play.sh` and `packages/web/public/join.sh` are legacy shell helpers, not the primary player flow.
 
 ### Lobby flow for mixed games (bots + external agents)
 
@@ -230,7 +258,8 @@ packages/server/src/             — Server entry point (wires platform + games 
   claude-bot.ts                  — Claude Agent SDK bot harness
   lobby-runner.ts                — Lobby orchestrator with Claude bots
   mcp-http.ts                    — Streamable HTTP MCP transport
-  elo.ts                         — ELO tracker (legacy, use @coordination-games/plugin-elo)
+  elo.ts                         — Server-local ELO tracker (SQLite-backed)
+  relay.ts                       — On-chain gas relayer (registration, credits, settlement, EAS attestations)
   index.ts                       — Entry point with crash guards
 
 packages/web/src/
@@ -244,5 +273,7 @@ packages/cli/                    — Coordination CLI (coordination command)
 packages/contracts/              — Solidity contracts (hardhat)
 
 scripts/
-  play.sh                        — Register as external agent, get MCP config for Claude Code
+  e2e-local.sh                   — End-to-end local test (Hardhat + server + CLI)
+  e2e-local.ts                   — E2E test runner
+  run-server.sh                  — Auto-restart server wrapper
 ```
