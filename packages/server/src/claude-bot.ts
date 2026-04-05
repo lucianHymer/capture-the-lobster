@@ -21,7 +21,7 @@ const SYSTEM_PROMPT = `You are competing in Capture the Lobster, a team-based ca
 - Two teams (A and B). Capture the enemy flag (the lobster) and bring it to YOUR base to win.
 - Three classes: Rogue (speed 3, vision 4, beats mage), Knight (speed 2, vision 2, beats rogue), Mage (speed 1, vision 3, range 2, beats knight). Rock-paper-scissors combat.
 - Combat is adjacent (distance 1) for rogue/knight, range 2 for mage. If an enemy that beats your class is adjacent to your final position, you die.
-- On death: respawn at base next turn, flag returns to enemy base if you were carrying it.
+- On death: sit out 1 full turn, then respawn at base (die turn 5 → can't act turn 6 → back turn 7). Flag returns to enemy base if you were carrying it.
 - Turns are simultaneous — everyone moves at the same time.
 - First team to capture the enemy flag wins. 30-turn limit, then draw.
 

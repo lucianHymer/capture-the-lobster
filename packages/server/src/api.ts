@@ -64,6 +64,7 @@ export interface SpectatorTile {
     unitClass: UnitClass;
     carryingFlag?: boolean;
     alive: boolean;
+    respawnTurn?: number;
   };
   units?: {
     id: string;
@@ -71,6 +72,7 @@ export interface SpectatorTile {
     unitClass: UnitClass;
     carryingFlag?: boolean;
     alive: boolean;
+    respawnTurn?: number;
   }[];
   flag?: { team: 'A' | 'B' };
 }
@@ -87,6 +89,7 @@ export interface SpectatorState {
     position: Hex;
     alive: boolean;
     carryingFlag: boolean;
+    respawnTurn?: number;
   }[];
   kills: { killerId: string; victimId: string; reason: string }[];
   chatA: { from: string; message: string; turn: number }[];
@@ -223,12 +226,11 @@ function buildSpectatorState(game: CtlSession, handles: Record<string, string> =
   const tiles: SpectatorTile[] = [];
   const unitsByHex = new Map<string, GameUnit[]>();
   for (const u of units) {
-    if (u.alive) {
-      const key = `${u.position.q},${u.position.r}`;
-      const list = unitsByHex.get(key) ?? [];
-      list.push(u);
-      unitsByHex.set(key, list);
-    }
+    // Include all units (alive and dead) — dead units shown at spawn with skull
+    const key = `${u.position.q},${u.position.r}`;
+    const list = unitsByHex.get(key) ?? [];
+    list.push(u);
+    unitsByHex.set(key, list);
   }
 
   const flagsByHex = new Map<string, 'A' | 'B'>();
@@ -255,6 +257,7 @@ function buildSpectatorState(game: CtlSession, handles: Record<string, string> =
         unitClass: primary.unitClass,
         carryingFlag: primary.carryingFlag || undefined,
         alive: primary.alive,
+        respawnTurn: primary.respawnTurn,
       };
       // Additional units on same hex
       if (unitsHere.length > 1) {
@@ -264,6 +267,7 @@ function buildSpectatorState(game: CtlSession, handles: Record<string, string> =
           unitClass: u.unitClass,
           carryingFlag: u.carryingFlag || undefined,
           alive: u.alive,
+          respawnTurn: u.respawnTurn,
         }));
       }
     }
@@ -329,6 +333,7 @@ function buildSpectatorState(game: CtlSession, handles: Record<string, string> =
       position: { ...u.position },
       alive: u.alive,
       carryingFlag: u.carryingFlag,
+      respawnTurn: u.respawnTurn,
     })),
     kills,
     chatA: relay ? relay.getSpectatorMessages(turn).filter(m => m.type === 'messaging' && m.scope === 'team' && units.some(u => u.id === m.sender && u.team === 'A')).map(m => ({ from: m.sender, message: (m.data as { body?: string })?.body ?? '', turn: m.turn })) : [],
@@ -1075,7 +1080,7 @@ export class GameServer {
       game,
       spectators: new Set(),
       stateHistory: [initialState],
-      spectatorDelay: 0,  // No delay for beta testing
+      spectatorDelay: 2,  // 2-turn delay for spectators
       turnTimer: null,
       deadlineTimer: null,
       botHandles,
@@ -1428,7 +1433,7 @@ export class GameServer {
       game,
       spectators: new Set(),
       stateHistory: [initialState],
-      spectatorDelay: 0,
+      spectatorDelay: 2,  // 2-turn delay for spectators
       turnTimer: null,
       deadlineTimer: null,
       botHandles,

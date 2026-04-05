@@ -406,12 +406,13 @@ export default function HexGrid({
 
               const renderUnit = (u: any, offsetX: number, spriteSize: number, fontSize: number) => {
                 const dim = selectedTeam !== 'all' && u.team !== selectedTeam;
+                const isDead = u.alive === false;
                 const unitSprite = `/tiles/units/${u.unitClass}.png`;
                 const isTeamB = u.team === 'B';
                 return (
                   <g
                     key={u.id}
-                    opacity={dim ? 0.3 : 1}
+                    opacity={dim ? 0.3 : isDead ? 0.4 : 1}
                     style={{ cursor: onUnitClick ? 'pointer' : 'default' }}
                     onClick={(e) => { if (onUnitClick) { e.stopPropagation(); onUnitClick(u.id, u.team); } }}
                   >
@@ -420,7 +421,7 @@ export default function HexGrid({
                       cx={cx + offsetX}
                       cy={cy}
                       r={spriteSize * 0.38}
-                      fill={u.team === 'A' ? '#3b82f6' : '#ef4444'}
+                      fill={isDead ? '#666' : u.team === 'A' ? '#3b82f6' : '#ef4444'}
                       opacity={0.35}
                     />
                     {/* Unit sprite */}
@@ -432,9 +433,22 @@ export default function HexGrid({
                       height={spriteSize}
                       style={{
                         pointerEvents: 'none',
-                        filter: isTeamB ? 'hue-rotate(160deg) saturate(1.3)' : 'none',
+                        filter: isDead
+                          ? 'grayscale(1) opacity(0.6)'
+                          : isTeamB ? 'hue-rotate(160deg) saturate(1.3)' : 'none',
                       }}
                     />
+                    {/* Skull overlay for dead units */}
+                    {isDead && (
+                      <text
+                        x={cx + offsetX}
+                        y={cy - spriteSize * 0.05}
+                        textAnchor="middle"
+                        dominantBaseline="central"
+                        fontSize={spriteSize * 0.55}
+                        style={{ pointerEvents: 'none' }}
+                      >☠️</text>
+                    )}
                     {/* Unit label */}
                     <text
                       x={cx + offsetX}
@@ -443,7 +457,7 @@ export default function HexGrid({
                       dominantBaseline="central"
                       fontSize={fontSize}
                       fontWeight="bold"
-                      fill={u.team === 'A' ? '#93c5fd' : '#fca5a5'}
+                      fill={isDead ? '#888' : u.team === 'A' ? '#93c5fd' : '#fca5a5'}
                       stroke="#000"
                       strokeWidth={2.5}
                       paintOrder="stroke"

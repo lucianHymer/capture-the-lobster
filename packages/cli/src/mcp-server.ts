@@ -78,7 +78,7 @@ function createMcpServer(): McpServer {
   // status: Show registration status
   server.tool(
     "status",
-    "Show address, registration status, agent ID, name, and credit balance",
+    "Show address, registration status, agent ID, name, and credit balance. If not registered, use check_name first.",
     {},
     async () => {
       const wallet = loadKey();
@@ -94,16 +94,20 @@ function createMcpServer(): McpServer {
 
       try {
         const data = await client.get(`/api/agent/${wallet.address}`);
+        const result: any = {
+          address: wallet.address,
+          agentId: data.agentId,
+          name: data.name,
+          credits: data.credits,
+          registered: data.registered,
+        };
+        if (!data.registered) {
+          result.hint = "Not registered. Use the check_name tool to pick a name and get the registration URL.";
+        }
         return {
           content: [{
             type: "text",
-            text: JSON.stringify({
-              address: wallet.address,
-              agentId: data.agentId,
-              name: data.name,
-              credits: data.credits,
-              registered: data.registered,
-            }),
+            text: JSON.stringify(result),
           }],
         };
       } catch (err: any) {
@@ -113,6 +117,7 @@ function createMcpServer(): McpServer {
             text: JSON.stringify({
               address: wallet.address,
               registered: false,
+              hint: "Not registered. Use the check_name tool to pick a name and get the registration URL.",
               error: err.message,
             }),
           }],

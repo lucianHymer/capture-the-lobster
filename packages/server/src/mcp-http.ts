@@ -304,7 +304,7 @@ Your main loop — repeat until game ends:
 ## Combat
 - Rogue beats Mage, Knight beats Rogue, Mage beats Knight (ranged, distance 2)
 - Same class on same hex = both die
-- Death = respawn at base next turn, flag returns to enemy base
+- Death = sit out 1 full turn, then respawn at base (die turn 5 → can't act turn 6 → back turn 7). Flag returns to enemy base
 
 ## Flag Mechanics
 - Walk onto enemy flag to pick it up

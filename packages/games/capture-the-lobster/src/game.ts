@@ -23,6 +23,8 @@ export interface GameUnit {
   position: Hex;
   alive: boolean;
   carryingFlag: boolean;
+  /** Turn number when this unit will respawn (undefined = not dead) */
+  respawnTurn?: number;
 }
 
 export interface FlagState {
@@ -52,6 +54,7 @@ export interface GameState {
     position: Hex;
     carryingFlag: boolean;
     alive: boolean;
+    respawnTurn?: number;
   };
   visibleTiles: VisibleTile[];
   yourFlag: { status: 'at_base' | 'carried' | 'unknown' };
@@ -260,6 +263,14 @@ export function resolveTurn(state: CtlGameState): { state: CtlGameState; record:
   let phase: GamePhase = state.phase;
   let winner: 'A' | 'B' | null = state.winner;
 
+  // 0. Respawn units whose respawnTurn has arrived
+  for (const unit of units) {
+    if (!unit.alive && unit.respawnTurn === currentTurn) {
+      unit.alive = true;
+      unit.respawnTurn = undefined;
+    }
+  }
+
   // 1. Record pre-move positions
   const unitPositionsBefore = new Map<string, Hex>();
   for (const unit of units) {
@@ -316,13 +327,25 @@ export function resolveTurn(state: CtlGameState): { state: CtlGameState; record:
 
   const combatResult = resolveCombat(combatUnits, wallSet);
 
-  // 6. Process deaths
+  // 6. Process deaths — dead units sit out 1 turn, then respawn
   const flagEvents: string[] = [];
   const mapBases = state.mapBases;
+  const allSpawnsA = mapBases.A.flatMap((b: { spawns: Hex[] }) => b.spawns);
+  const allSpawnsB = mapBases.B.flatMap((b: { spawns: Hex[] }) => b.spawns);
+  const spawnCountA = { current: 0 };
+  const spawnCountB = { current: 0 };
 
   for (const deadId of combatResult.deaths) {
     const unit = units.find((u) => u.id === deadId)!;
     unit.alive = false;
+    // Respawn 2 turns later (skip next turn entirely)
+    unit.respawnTurn = currentTurn + 2;
+
+    // Move to spawn position immediately (so spectators see where they'll respawn)
+    const spawns = unit.team === 'A' ? allSpawnsA : allSpawnsB;
+    const counter = unit.team === 'A' ? spawnCountA : spawnCountB;
+    unit.position = { ...spawns[counter.current % spawns.length] };
+    counter.current++;
 
     if (unit.carryingFlag) {
       unit.carryingFlag = false;
@@ -382,21 +405,6 @@ export function resolveTurn(state: CtlGameState): { state: CtlGameState; record:
       scored = true;
       break;
     }
-  }
-
-  // 9. Respawn dead units
-  const spawnCountA = { current: 0 };
-  const spawnCountB = { current: 0 };
-  const allSpawnsA = mapBases.A.flatMap((b: { spawns: Hex[] }) => b.spawns);
-  const allSpawnsB = mapBases.B.flatMap((b: { spawns: Hex[] }) => b.spawns);
-
-  for (const unit of units) {
-    if (unit.alive) continue;
-    const spawns = unit.team === 'A' ? allSpawnsA : allSpawnsB;
-    const counter = unit.team === 'A' ? spawnCountA : spawnCountB;
-    unit.position = { ...spawns[counter.current % spawns.length] };
-    counter.current++;
-    unit.alive = true;
   }
 
   // Record post-move positions
@@ -532,6 +540,7 @@ export function getStateForAgent(
       position: { ...unit.position },
       carryingFlag: unit.carryingFlag,
       alive: unit.alive,
+      respawnTurn: unit.respawnTurn,
     },
     visibleTiles,
     yourFlag: { status: yourFlagStatus },

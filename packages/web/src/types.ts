@@ -7,6 +7,8 @@ export interface VisibleTile {
     team: 'A' | 'B';
     unitClass: 'rogue' | 'knight' | 'mage';
     carryingFlag?: boolean;
+    alive?: boolean;
+    respawnTurn?: number;
   };
   flag?: { team: 'A' | 'B' };
 }

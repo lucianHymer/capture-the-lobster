@@ -41,6 +41,6 @@ export function registerInitCommand(program: Command) {
       process.stdout.write(`  Key file: ~/.coordination/keys/default.json\n`);
       process.stdout.write(`  Server:   ${config.serverUrl}\n`);
       process.stdout.write(`  Key mode: ${config.keyMode}\n`);
-      process.stdout.write(`\n  Next: coordination register <name>\n\n`);
+      process.stdout.write(`\n  Next: coordination check-name <your-name>\n\n`);
     });
 }

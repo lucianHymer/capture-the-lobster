@@ -35,7 +35,7 @@ export function registerStatusCommand(program: Command) {
           process.stdout.write(`  Credits:  ${data.credits}\n`);
         } else {
           process.stdout.write(`  Status:   Not registered\n`);
-          process.stdout.write(`\n  Register with: coordination register <name>\n`);
+          process.stdout.write(`\n  Get started with: coordination check-name <your-name>\n`);
         }
       } catch (err: any) {
         process.stdout.write(`  Server:   Unreachable (${err.message})\n`);
