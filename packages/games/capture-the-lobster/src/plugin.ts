@@ -1,22 +1,27 @@
 /**
- * Capture the Lobster — CoordinationGame plugin implementation.
+ * Capture the Lobster — CoordinationGame plugin.
  *
- * Wraps the existing game engine (hex, combat, fog, movement, map, game.ts)
- * to implement the shared CoordinationGame interface from @lobster/platform.
- *
- * This allows CtL to be registered as a game plugin in the coordination
- * framework while keeping all existing game logic untouched.
+ * Implements the CoordinationGame interface using the pure game functions
+ * from game.ts. State in, state out.
  */
 
 import type {
   CoordinationGame,
   EIP712TypeDef,
   GameLobbyConfig,
-} from '@lobster/platform';
+} from '@coordination-games/platform';
 
-import { GameManager, GameConfig, GameUnit, FlagState, TurnRecord } from './game.js';
-import { generateMap, GameMap, MapConfig } from './map.js';
-import { Direction, Hex, hexToString } from './hex.js';
+import {
+  CtlGameState,
+  createGameState,
+  validateMoveForPlayer,
+  submitMove as gameSubmitMove,
+  submitChat as gameSubmitChat,
+  resolveTurn,
+  isGameOver,
+} from './game.js';
+import { generateMap, MapConfig } from './map.js';
+import { Direction } from './hex.js';
 import { UnitClass } from './movement.js';
 
 // ---------------------------------------------------------------------------
@@ -25,19 +30,12 @@ import { UnitClass } from './movement.js';
 
 /** Configuration for creating a new CtL game. */
 export interface CtlConfig {
-  /** Map generation seed (for deterministic maps) */
   mapSeed: string;
-  /** Map radius */
   mapRadius?: number;
-  /** Wall density (0-1) */
   wallDensity?: number;
-  /** Team size (players per team) */
   teamSize: number;
-  /** Turn limit before draw */
   turnLimit?: number;
-  /** Turn timer in seconds */
   turnTimerSeconds?: number;
-  /** Player assignments: id -> { team, unitClass } */
   players: CtlPlayerConfig[];
 }
 
@@ -47,59 +45,17 @@ export interface CtlPlayerConfig {
   unitClass: UnitClass;
 }
 
-/**
- * CtL game state — a serializable snapshot of the full game state.
- * Wraps the GameManager's internal state into a plain object
- * that can be hashed, compared, and stored.
- */
-export interface CtlState {
-  turn: number;
-  phase: 'pre_game' | 'in_progress' | 'finished';
-  units: {
-    id: string;
-    team: 'A' | 'B';
-    unitClass: UnitClass;
-    position: Hex;
-    alive: boolean;
-    carryingFlag: boolean;
-  }[];
-  flags: {
-    A: { team: 'A'; position: Hex; carried: boolean; carrierId?: string }[];
-    B: { team: 'B'; position: Hex; carried: boolean; carrierId?: string }[];
-  };
-  score: { A: number; B: number };
-  winner: 'A' | 'B' | null;
-  /** Serialized map data for state reconstruction */
-  mapTiles: [string, string][];
-  mapRadius: number;
-  mapBases: {
-    A: { flag: Hex; spawns: Hex[] }[];
-    B: { flag: Hex; spawns: Hex[] }[];
-  };
-  config: { turnLimit: number; turnTimerSeconds: number; teamSize: number };
-  /** Move submissions for the current turn */
-  moveSubmissions: [string, Direction[]][];
-  /** Team messages */
-  teamMessages: {
-    A: { from: string; message: string; turn: number }[];
-    B: { from: string; message: string; turn: number }[];
-  };
-}
-
 /** A single player's move in CtL. */
 export interface CtlMove {
-  /** Direction path for the player's unit */
   path: Direction[];
-  /** Optional chat message to teammates */
   chatMessage?: string;
 }
 
 /** CtL game outcome. */
 export interface CtlOutcome {
-  winner: 'A' | 'B' | null;  // null = draw
+  winner: 'A' | 'B' | null;
   score: { A: number; B: number };
   turnCount: number;
-  /** Per-player stats */
   playerStats: Map<string, {
     team: 'A' | 'B';
     kills: number;
@@ -110,136 +66,12 @@ export interface CtlOutcome {
 }
 
 // ---------------------------------------------------------------------------
-// Internal: GameManager wrapper
-// ---------------------------------------------------------------------------
-
-/**
- * We keep a mapping of CtlState -> live GameManager instances so the plugin
- * can work with the existing engine. The framework passes state objects around,
- * but internally we reconstruct GameManagers as needed.
- */
-const managerCache = new WeakMap<CtlState, GameManager>();
-
-function getOrCreateManager(state: CtlState): GameManager {
-  const cached = managerCache.get(state);
-  if (cached) return cached;
-
-  // Reconstruct map
-  const map: GameMap = {
-    tiles: new Map(state.mapTiles.map(([k, v]) => [k, v as any])),
-    radius: state.mapRadius,
-    bases: state.mapBases,
-  };
-
-  // Reconstruct players for the constructor
-  const players = state.units.map((u) => ({
-    id: u.id,
-    team: u.team,
-    unitClass: u.unitClass,
-  }));
-
-  const gm = new GameManager('_reconstructed', map, players, state.config);
-
-  // Override the constructed state with the actual state
-  gm.turn = state.turn;
-  gm.phase = state.phase;
-  gm.winner = state.winner;
-  gm.score = { ...state.score };
-
-  for (const unit of state.units) {
-    const gmUnit = gm.units.find((u) => u.id === unit.id);
-    if (gmUnit) {
-      gmUnit.position = { ...unit.position };
-      gmUnit.alive = unit.alive;
-      gmUnit.carryingFlag = unit.carryingFlag;
-    }
-  }
-
-  gm.flags.A = state.flags.A.map((f) => ({
-    team: 'A' as const,
-    position: { ...f.position },
-    carried: f.carried,
-    carrierId: f.carrierId,
-  }));
-  gm.flags.B = state.flags.B.map((f) => ({
-    team: 'B' as const,
-    position: { ...f.position },
-    carried: f.carried,
-    carrierId: f.carrierId,
-  }));
-
-  // Restore move submissions
-  gm.moveSubmissions.clear();
-  for (const [id, path] of state.moveSubmissions) {
-    gm.moveSubmissions.set(id, path);
-  }
-
-  // Restore team messages
-  gm.teamMessages.A = state.teamMessages.A.map((m) => ({ ...m }));
-  gm.teamMessages.B = state.teamMessages.B.map((m) => ({ ...m }));
-
-  managerCache.set(state, gm);
-  return gm;
-}
-
-function snapshotState(gm: GameManager, map: GameMap): CtlState {
-  const state: CtlState = {
-    turn: gm.turn,
-    phase: gm.phase,
-    units: gm.units.map((u) => ({
-      id: u.id,
-      team: u.team,
-      unitClass: u.unitClass,
-      position: { ...u.position },
-      alive: u.alive,
-      carryingFlag: u.carryingFlag,
-    })),
-    flags: {
-      A: gm.flags.A.map((f) => ({
-        team: 'A' as const,
-        position: { ...f.position },
-        carried: f.carried,
-        carrierId: f.carrierId,
-      })),
-      B: gm.flags.B.map((f) => ({
-        team: 'B' as const,
-        position: { ...f.position },
-        carried: f.carried,
-        carrierId: f.carrierId,
-      })),
-    },
-    score: { ...gm.score },
-    winner: gm.winner,
-    mapTiles: [...map.tiles.entries()],
-    mapRadius: map.radius,
-    mapBases: map.bases as any,
-    config: {
-      turnLimit: gm.config.turnLimit,
-      turnTimerSeconds: gm.config.turnTimerSeconds,
-      teamSize: gm.config.teamSize,
-    },
-    moveSubmissions: [...gm.moveSubmissions.entries()],
-    teamMessages: {
-      A: gm.teamMessages.A.map((m) => ({ ...m })),
-      B: gm.teamMessages.B.map((m) => ({ ...m })),
-    },
-  };
-  managerCache.set(state, gm);
-  return state;
-}
-
-// ---------------------------------------------------------------------------
 // The plugin
 // ---------------------------------------------------------------------------
 
-/**
- * Capture the Lobster game plugin.
- *
- * Implements CoordinationGame<CtlConfig, CtlState, CtlMove, CtlOutcome>.
- */
 export const CaptureTheLobsterPlugin: CoordinationGame<
   CtlConfig,
-  CtlState,
+  CtlGameState,
   CtlMove,
   CtlOutcome
 > = {
@@ -259,7 +91,7 @@ export const CaptureTheLobsterPlugin: CoordinationGame<
     ],
   } as EIP712TypeDef,
 
-  createInitialState(config: CtlConfig): CtlState {
+  createInitialState(config: CtlConfig): CtlGameState {
     const mapConfig: MapConfig = {
       seed: config.mapSeed,
       radius: config.mapRadius,
@@ -267,85 +99,52 @@ export const CaptureTheLobsterPlugin: CoordinationGame<
     };
     const map = generateMap(mapConfig);
 
-    const gameConfig: GameConfig = {
-      teamSize: config.teamSize,
-      turnLimit: config.turnLimit,
-      turnTimerSeconds: config.turnTimerSeconds,
-    };
-
-    const gm = new GameManager(
-      `game_${config.mapSeed}`,
+    return createGameState(
       map,
       config.players.map((p) => ({
         id: p.id,
         team: p.team,
         unitClass: p.unitClass,
       })),
-      gameConfig,
+      {
+        teamSize: config.teamSize,
+        turnLimit: config.turnLimit,
+        turnTimerSeconds: config.turnTimerSeconds,
+      },
     );
-
-    return snapshotState(gm, map);
   },
 
-  validateMove(state: CtlState, playerId: string, move: CtlMove): boolean {
-    const gm = getOrCreateManager(state);
-
-    // Check the player exists and is alive
-    const unit = gm.units.find((u) => u.id === playerId);
-    if (!unit || !unit.alive) return false;
-
-    // Validate the path
-    const result = gm.submitMove(playerId, move.path);
-
-    // Undo the submission (we just wanted to validate)
-    if (result.success) {
-      gm.moveSubmissions.delete(playerId);
-    }
-
-    return result.success;
+  validateMove(state: CtlGameState, playerId: string, move: CtlMove): boolean {
+    return validateMoveForPlayer(state, playerId, move.path).valid;
   },
 
-  resolveTurn(state: CtlState, moves: Map<string, CtlMove>): CtlState {
-    const gm = getOrCreateManager(state);
+  resolveTurn(state: CtlGameState, moves: Map<string, CtlMove>): CtlGameState {
+    let current = state;
 
-    // Reconstruct the map for snapshotting
-    const map: GameMap = {
-      tiles: new Map(state.mapTiles.map(([k, v]) => [k, v as any])),
-      radius: state.mapRadius,
-      bases: state.mapBases as any,
-    };
-
-    // Submit all moves
     for (const [playerId, move] of moves) {
-      // Submit chat messages first
       if (move.chatMessage) {
-        gm.submitChat(playerId, move.chatMessage);
+        current = gameSubmitChat(current, playerId, move.chatMessage);
       }
-
-      // Submit the movement path
-      gm.submitMove(playerId, move.path);
+      const result = gameSubmitMove(current, playerId, move.path);
+      current = result.state;
     }
 
     // Submit empty moves for players who didn't submit
-    for (const unit of gm.units) {
-      if (unit.alive && !gm.moveSubmissions.has(unit.id)) {
-        gm.submitMove(unit.id, []);
+    for (const unit of current.units) {
+      if (unit.alive && !new Map(current.moveSubmissions).has(unit.id)) {
+        const result = gameSubmitMove(current, unit.id, []);
+        current = result.state;
       }
     }
 
-    // Resolve the turn
-    gm.resolveTurn();
-
-    // Return a new state snapshot
-    return snapshotState(gm, map);
+    return resolveTurn(current).state;
   },
 
-  isOver(state: CtlState): boolean {
-    return state.phase === 'finished';
+  isOver(state: CtlGameState): boolean {
+    return isGameOver(state);
   },
 
-  getOutcome(state: CtlState): CtlOutcome {
-    // Build basic per-player stats (kills, deaths could be derived from turn history)
+  getOutcome(state: CtlGameState): CtlOutcome {
     const playerStats = new Map<string, {
       team: 'A' | 'B';
       kills: number;
@@ -372,7 +171,7 @@ export const CaptureTheLobsterPlugin: CoordinationGame<
     };
   },
 
-  entryCost: 10, // 10 credits per player
+  entryCost: 10,
 
   lobby: {
     queueType: 'open',
@@ -396,42 +195,17 @@ export const CaptureTheLobsterPlugin: CoordinationGame<
     const payouts = new Map<string, number>();
 
     if (!outcome.winner) {
-      // Draw — everyone gets their entry back (zero delta)
-      for (const id of playerIds) {
-        payouts.set(id, 0);
-      }
+      for (const id of playerIds) payouts.set(id, 0);
       return payouts;
     }
 
-    // Winner team gets +entryCost, loser team gets -entryCost
-    // This is zero-sum across all players
     const entryCost = 10;
     for (const id of playerIds) {
       const stats = outcome.playerStats.get(id);
-      if (!stats) {
-        payouts.set(id, 0);
-        continue;
-      }
-      if (stats.team === outcome.winner) {
-        payouts.set(id, entryCost);
-      } else {
-        payouts.set(id, -entryCost);
-      }
+      if (!stats) { payouts.set(id, 0); continue; }
+      payouts.set(id, stats.team === outcome.winner ? entryCost : -entryCost);
     }
 
     return payouts;
   },
 };
-
-// ---------------------------------------------------------------------------
-// Helper: create a GameManager from a CtlState (for the existing server)
-// ---------------------------------------------------------------------------
-
-/**
- * Get or reconstruct a GameManager from a CtlState.
- * Useful for the existing server to bridge between the framework
- * and the game-specific API surface.
- */
-export function getGameManager(state: CtlState): GameManager {
-  return getOrCreateManager(state);
-}

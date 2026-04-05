@@ -16,11 +16,11 @@ import {
   LobbyPipeline,
   getAvailableTools,
   generateGuide,
-} from '@lobster/platform';
-import type { ToolPlugin, AgentInfo } from '@lobster/platform';
-import { CaptureTheLobsterPlugin, TeamFormationPhase, ClassSelectionPhase } from '@lobster/games-ctl';
-import { BasicChatPlugin, formatChatMessage, extractMessages } from '@lobster/plugin-chat';
-import { createEloPlugin } from '@lobster/plugin-elo';
+} from '@coordination-games/platform';
+import type { ToolPlugin, AgentInfo } from '@coordination-games/platform';
+import { CaptureTheLobsterPlugin, TeamFormationPhase, ClassSelectionPhase } from '@coordination-games/game-ctl';
+import { BasicChatPlugin, formatChatMessage, extractMessages } from '@coordination-games/plugin-chat';
+import { createEloPlugin } from '@coordination-games/plugin-elo';
 import { GameRelay } from '../typed-relay.js';
 
 describe('Full game lifecycle', () => {

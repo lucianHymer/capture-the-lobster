@@ -1,8 +1,20 @@
+/**
+ * Capture the Lobster — Stateless Game Engine
+ *
+ * All game logic is expressed as pure functions: state in, state out.
+ * No mutable classes, no caching. The framework (GameRoom) holds the state
+ * and passes it to these functions each turn.
+ */
+
 import { Hex, Direction, hexEquals, hexToString } from './hex.js';
 import { UnitClass, CLASS_SPEED, MoveUnit, MoveSubmission, validatePath, resolveMovements } from './movement.js';
 import { GameMap, TileType, getMapRadiusForTeamSize } from './map.js';
 import { VisibleTile, FogUnit, buildVisibleState } from './fog.js';
 import { CombatUnit, resolveCombat } from './combat.js';
+
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
 
 export interface GameUnit {
   id: string;
@@ -63,6 +75,31 @@ export interface GameConfig {
   teamSize?: number;
 }
 
+/**
+ * The full game state — a plain, serializable object.
+ * This is the single source of truth passed between turns.
+ */
+export interface CtlGameState {
+  turn: number;
+  phase: GamePhase;
+  units: GameUnit[];
+  flags: { A: FlagState[]; B: FlagState[] };
+  score: { A: number; B: number };
+  winner: 'A' | 'B' | null;
+  config: Required<GameConfig>;
+  /** Serialized map for state portability */
+  mapTiles: [string, string][];
+  mapRadius: number;
+  mapBases: {
+    A: { flag: Hex; spawns: Hex[] }[];
+    B: { flag: Hex; spawns: Hex[] }[];
+  };
+  /** Current turn's move submissions (cleared after resolution) */
+  moveSubmissions: [string, Direction[]][];
+  /** Team chat messages (all turns) */
+  teamMessages: { A: TeamMessage[]; B: TeamMessage[] };
+}
+
 /** Compute turn limit based on map radius */
 export function getTurnLimitForRadius(radius: number): number {
   return 20 + (radius * 2);
@@ -74,458 +111,505 @@ const DEFAULT_CONFIG: Required<GameConfig> = {
   teamSize: 4,
 };
 
-export class GameManager {
-  readonly gameId: string;
-  readonly map: GameMap;
-  readonly config: Required<GameConfig>;
+// ---------------------------------------------------------------------------
+// Helper: compute wall/valid tile sets from map data
+// ---------------------------------------------------------------------------
 
-  units: GameUnit[];
-  flags: { A: FlagState[]; B: FlagState[] };
-  turn: number;
-  phase: GamePhase;
-  winner: 'A' | 'B' | null;
-  score: { A: number; B: number };
-
-  moveSubmissions: Map<string, Direction[]>;
-  teamMessages: { A: TeamMessage[]; B: TeamMessage[] };
-  private turnHistory: TurnRecord[];
-  private lastCheckedTurn: Map<string, number>;
-
-  // Precomputed sets for performance
-  private wallSet: Set<string>;
-  private validTiles: Set<string>;
-
-  constructor(
-    gameId: string,
-    map: GameMap,
-    players: { id: string; team: 'A' | 'B'; unitClass: UnitClass }[],
-    config?: GameConfig,
-  ) {
-    this.gameId = gameId;
-    this.map = map;
-    this.config = { ...DEFAULT_CONFIG, ...config };
-
-    // Precompute wall set and valid tiles
-    this.wallSet = new Set<string>();
-    this.validTiles = new Set<string>();
-    for (const [key, type] of map.tiles) {
-      if (type === 'wall') {
-        this.wallSet.add(key);
-      } else {
-        this.validTiles.add(key);
-      }
+function computeTileSets(mapTiles: [string, string][]): { wallSet: Set<string>; validTiles: Set<string> } {
+  const wallSet = new Set<string>();
+  const validTiles = new Set<string>();
+  for (const [key, type] of mapTiles) {
+    if (type === 'wall') {
+      wallSet.add(key);
+    } else {
+      validTiles.add(key);
     }
+  }
+  return { wallSet, validTiles };
+}
 
-    // Create units at spawn positions — distribute across all bases
-    const spawnIndexA = { current: 0 };
-    const spawnIndexB = { current: 0 };
+// ---------------------------------------------------------------------------
+// Pure functions
+// ---------------------------------------------------------------------------
 
-    // Flatten all spawns across bases for each team
-    const allSpawnsA = map.bases.A.flatMap(b => b.spawns);
-    const allSpawnsB = map.bases.B.flatMap(b => b.spawns);
+/**
+ * Create the initial game state from a map and player assignments.
+ */
+export function createGameState(
+  map: GameMap,
+  players: { id: string; team: 'A' | 'B'; unitClass: UnitClass }[],
+  config?: GameConfig,
+): CtlGameState {
+  const resolvedConfig = { ...DEFAULT_CONFIG, ...config };
 
-    this.units = players.map((p) => {
-      const spawns = p.team === 'A' ? allSpawnsA : allSpawnsB;
-      const spawnIdx = p.team === 'A' ? spawnIndexA : spawnIndexB;
-      const position = spawns[spawnIdx.current % spawns.length];
-      spawnIdx.current++;
+  // Place units at spawn positions
+  const spawnIndexA = { current: 0 };
+  const spawnIndexB = { current: 0 };
+  const allSpawnsA = map.bases.A.flatMap(b => b.spawns);
+  const allSpawnsB = map.bases.B.flatMap(b => b.spawns);
 
-      return {
-        id: p.id,
-        team: p.team,
-        unitClass: p.unitClass,
-        position: { ...position },
-        alive: true,
-        carryingFlag: false,
-      };
-    });
+  const units: GameUnit[] = players.map((p) => {
+    const spawns = p.team === 'A' ? allSpawnsA : allSpawnsB;
+    const spawnIdx = p.team === 'A' ? spawnIndexA : spawnIndexB;
+    const position = spawns[spawnIdx.current % spawns.length];
+    spawnIdx.current++;
 
-    // Initialize flags at base positions (one flag per base)
-    this.flags = {
-      A: map.bases.A.map((base) => ({
-        team: 'A' as const,
-        position: { ...base.flag },
-        carried: false,
-      })),
-      B: map.bases.B.map((base) => ({
-        team: 'B' as const,
-        position: { ...base.flag },
-        carried: false,
-      })),
+    return {
+      id: p.id,
+      team: p.team,
+      unitClass: p.unitClass,
+      position: { ...position },
+      alive: true,
+      carryingFlag: false,
     };
+  });
 
-    this.turn = 0;
-    this.phase = 'in_progress';
-    this.winner = null;
-    this.score = { A: 0, B: 0 };
+  const flags = {
+    A: map.bases.A.map((base) => ({
+      team: 'A' as const,
+      position: { ...base.flag },
+      carried: false,
+    })),
+    B: map.bases.B.map((base) => ({
+      team: 'B' as const,
+      position: { ...base.flag },
+      carried: false,
+    })),
+  };
 
-    this.moveSubmissions = new Map();
-    this.teamMessages = { A: [], B: [] };
-    this.turnHistory = [];
-    this.lastCheckedTurn = new Map();
+  return {
+    turn: 0,
+    phase: 'in_progress',
+    units,
+    flags,
+    score: { A: 0, B: 0 },
+    winner: null,
+    config: resolvedConfig,
+    mapTiles: [...map.tiles.entries()] as [string, string][],
+    mapRadius: map.radius,
+    mapBases: map.bases as any,
+    moveSubmissions: [],
+    teamMessages: { A: [], B: [] },
+  };
+}
+
+/**
+ * Validate a move for a player. Returns { success, error? }.
+ */
+export function validateMoveForPlayer(
+  state: CtlGameState,
+  playerId: string,
+  path: Direction[],
+): { valid: boolean; error?: string } {
+  if (state.phase !== 'in_progress') {
+    return { valid: false, error: 'Game is not in progress' };
   }
 
-  getStateForAgent(agentId: string): GameState {
-    const unit = this.units.find((u) => u.id === agentId);
-    if (!unit) {
-      throw new Error(`Unknown agent: ${agentId}`);
+  const unit = state.units.find((u) => u.id === playerId);
+  if (!unit) return { valid: false, error: `Unknown agent: ${playerId}` };
+  if (!unit.alive) return { valid: false, error: 'Dead units cannot move' };
+
+  const moveUnit: MoveUnit = {
+    id: unit.id,
+    team: unit.team,
+    unitClass: unit.unitClass,
+    position: unit.position,
+  };
+  const validation = validatePath(moveUnit, path);
+  if (!validation.valid) return { valid: false, error: validation.error };
+
+  return { valid: true };
+}
+
+/**
+ * Submit a move — returns a new state with the move recorded.
+ */
+export function submitMove(
+  state: CtlGameState,
+  playerId: string,
+  path: Direction[],
+): { state: CtlGameState; success: boolean; error?: string } {
+  const validation = validateMoveForPlayer(state, playerId, path);
+  if (!validation.valid) {
+    return { state, success: false, error: validation.error };
+  }
+
+  // Add move to submissions (replace if already submitted)
+  const submissions = new Map(state.moveSubmissions);
+  submissions.set(playerId, path);
+
+  return {
+    state: { ...state, moveSubmissions: [...submissions.entries()] },
+    success: true,
+  };
+}
+
+/**
+ * Submit a chat message — returns a new state with the message appended.
+ */
+export function submitChat(
+  state: CtlGameState,
+  playerId: string,
+  message: string,
+): CtlGameState {
+  const unit = state.units.find((u) => u.id === playerId);
+  if (!unit) return state;
+
+  const msg: TeamMessage = { from: playerId, message, turn: state.turn };
+  const team = unit.team;
+  return {
+    ...state,
+    teamMessages: {
+      ...state.teamMessages,
+      [team]: [...state.teamMessages[team], msg],
+    },
+  };
+}
+
+/**
+ * Check if all alive units have submitted moves.
+ */
+export function allMovesSubmitted(state: CtlGameState): boolean {
+  const submissions = new Map(state.moveSubmissions);
+  const aliveUnits = state.units.filter((u) => u.alive);
+  return aliveUnits.every((u) => submissions.has(u.id));
+}
+
+/**
+ * THE CORE LOOP — resolve a turn. Pure function: state in, state + record out.
+ */
+export function resolveTurn(state: CtlGameState): { state: CtlGameState; record: TurnRecord } {
+  const currentTurn = state.turn;
+  const { wallSet, validTiles } = computeTileSets(state.mapTiles);
+  const submissions = new Map(state.moveSubmissions);
+
+  // Deep-copy mutable parts
+  const units: GameUnit[] = state.units.map(u => ({ ...u, position: { ...u.position } }));
+  const flags = {
+    A: state.flags.A.map(f => ({ ...f, position: { ...f.position } })),
+    B: state.flags.B.map(f => ({ ...f, position: { ...f.position } })),
+  };
+  let score = { ...state.score };
+  let phase: GamePhase = state.phase;
+  let winner: 'A' | 'B' | null = state.winner;
+
+  // 1. Record pre-move positions
+  const unitPositionsBefore = new Map<string, Hex>();
+  for (const unit of units) {
+    unitPositionsBefore.set(unit.id, { ...unit.position });
+  }
+
+  // 2. Build move data
+  const moveUnits: MoveUnit[] = [];
+  const moveSubmissions: MoveSubmission[] = [];
+
+  for (const unit of units) {
+    if (!unit.alive) continue;
+    moveUnits.push({
+      id: unit.id,
+      team: unit.team,
+      unitClass: unit.unitClass,
+      position: { ...unit.position },
+    });
+    const path = submissions.get(unit.id) ?? [];
+    moveSubmissions.push({ unitId: unit.id, path });
+  }
+
+  const moves = new Map<string, Direction[]>();
+  for (const [id, path] of submissions) {
+    moves.set(id, [...path]);
+  }
+
+  // 3. Resolve movements
+  const moveResults = resolveMovements(moveUnits, moveSubmissions, validTiles);
+
+  // 4. Update unit positions
+  for (const result of moveResults) {
+    const unit = units.find((u) => u.id === result.unitId)!;
+    unit.position = { ...result.to };
+
+    if (unit.carryingFlag) {
+      const enemyTeam: 'A' | 'B' = unit.team === 'A' ? 'B' : 'A';
+      const carriedFlag = flags[enemyTeam].find(f => f.carrierId === unit.id);
+      if (carriedFlag) {
+        carriedFlag.position = { ...result.to };
+      }
     }
+  }
 
-    const team = unit.team;
-    const enemyTeam: 'A' | 'B' = team === 'A' ? 'B' : 'A';
-
-    // Build fog units for visibility calculation
-    const fogUnits: FogUnit[] = this.units.map((u) => ({
+  // 5. Resolve combat
+  const combatUnits: CombatUnit[] = units
+    .filter((u) => u.alive)
+    .map((u) => ({
       id: u.id,
       team: u.team,
       unitClass: u.unitClass,
-      position: u.position,
-      alive: u.alive,
+      position: { ...u.position },
     }));
 
-    const viewer: FogUnit = {
-      id: unit.id,
-      team: unit.team,
-      unitClass: unit.unitClass,
-      position: unit.position,
-      alive: unit.alive,
-    };
+  const combatResult = resolveCombat(combatUnits, wallSet);
 
-    const flagsForFog = {
-      A: this.flags.A.map(f => ({
-        position: f.position,
-        carried: f.carried,
-        carrierId: f.carrierId,
-      })),
-      B: this.flags.B.map(f => ({
-        position: f.position,
-        carried: f.carried,
-        carrierId: f.carrierId,
-      })),
-    };
+  // 6. Process deaths
+  const flagEvents: string[] = [];
+  const mapBases = state.mapBases;
 
-    const visibleTiles = buildVisibleState(
-      viewer,
-      fogUnits,
-      this.wallSet,
-      this.map.tiles,
-      flagsForFog,
-    );
+  for (const deadId of combatResult.deaths) {
+    const unit = units.find((u) => u.id === deadId)!;
+    unit.alive = false;
 
-    // Determine your flag statuses (any flag carried = bad)
-    const yourFlags = this.flags[team];
-    let yourFlagStatus: 'at_base' | 'carried' | 'unknown' = 'at_base';
-    for (const f of yourFlags) {
-      if (f.carried) { yourFlagStatus = 'carried'; break; }
-    }
-
-    // Determine enemy flag status (best status across all enemy flags)
-    const enemyFlags = this.flags[enemyTeam];
-    let enemyFlagStatus: 'at_base' | 'carried_by_you' | 'carried_by_ally' | 'unknown' = 'unknown';
-    for (const ef of enemyFlags) {
-      if (ef.carried && ef.carrierId === agentId) {
-        enemyFlagStatus = 'carried_by_you';
-        break; // best possible
-      } else if (ef.carried && ef.carrierId) {
-        const carrier = this.units.find((u) => u.id === ef.carrierId);
-        if (carrier && carrier.team === team) {
-          enemyFlagStatus = 'carried_by_ally';
-        }
-      } else if (!ef.carried) {
-        const enemyFlagKey = hexToString(ef.position);
-        const isVisible = visibleTiles.some(
-          (t) => hexToString({ q: t.q, r: t.r }) === enemyFlagKey,
-        );
-        if (isVisible && enemyFlagStatus === 'unknown') {
-          enemyFlagStatus = 'at_base';
-        }
-      }
-    }
-
-    // Get messages since last check
-    const lastCheck = this.lastCheckedTurn.get(agentId) ?? -1;
-    const messages = this.teamMessages[team].filter((m) => m.turn > lastCheck);
-    this.lastCheckedTurn.set(agentId, this.turn);
-
-    return {
-      turn: this.turn,
-      phase: this.phase,
-      yourUnit: {
-        id: unit.id,
-        unitClass: unit.unitClass,
-        position: { ...unit.position },
-        carryingFlag: unit.carryingFlag,
-        alive: unit.alive,
-      },
-      visibleTiles,
-      yourFlag: { status: yourFlagStatus },
-      enemyFlag: { status: enemyFlagStatus },
-      messagesSinceLastCheck: messages,
-      timeRemainingSeconds: this.config.turnTimerSeconds,
-      moveSubmitted: this.moveSubmissions.has(agentId),
-      score: {
-        yourTeam: this.score[team],
-        enemyTeam: this.score[enemyTeam],
-      },
-    };
-  }
-
-  submitMove(agentId: string, path: Direction[]): { success: boolean; error?: string } {
-    if (this.phase !== 'in_progress') {
-      return { success: false, error: 'Game is not in progress' };
-    }
-
-    const unit = this.units.find((u) => u.id === agentId);
-    if (!unit) {
-      return { success: false, error: `Unknown agent: ${agentId}` };
-    }
-
-    if (!unit.alive) {
-      return { success: false, error: 'Dead units cannot move' };
-    }
-
-    // Validate path length against class speed
-    const moveUnit: MoveUnit = {
-      id: unit.id,
-      team: unit.team,
-      unitClass: unit.unitClass,
-      position: unit.position,
-    };
-    const validation = validatePath(moveUnit, path);
-    if (!validation.valid) {
-      return { success: false, error: validation.error };
-    }
-
-    this.moveSubmissions.set(agentId, path);
-    return { success: true };
-  }
-
-  submitChat(agentId: string, message: string): void {
-    const unit = this.units.find((u) => u.id === agentId);
-    if (!unit) return;
-
-    const msg: TeamMessage = {
-      from: agentId,
-      message,
-      turn: this.turn,
-    };
-    this.teamMessages[unit.team].push(msg);
-  }
-
-  getTeamMessages(agentId: string, sinceTurn?: number): TeamMessage[] {
-    const unit = this.units.find((u) => u.id === agentId);
-    if (!unit) return [];
-
-    const since = sinceTurn ?? 0;
-    return this.teamMessages[unit.team].filter((m) => m.turn >= since);
-  }
-
-  allMovesSubmitted(): boolean {
-    const aliveUnits = this.units.filter((u) => u.alive);
-    return aliveUnits.every((u) => this.moveSubmissions.has(u.id));
-  }
-
-  resolveTurn(): TurnRecord {
-    const currentTurn = this.turn;
-
-    // 1. Record pre-move positions
-    const unitPositionsBefore = new Map<string, Hex>();
-    for (const unit of this.units) {
-      unitPositionsBefore.set(unit.id, { ...unit.position });
-    }
-
-    // 2. Build MoveUnit and MoveSubmission arrays
-    const moveUnits: MoveUnit[] = [];
-    const submissions: MoveSubmission[] = [];
-
-    for (const unit of this.units) {
-      if (!unit.alive) continue;
-
-      moveUnits.push({
-        id: unit.id,
-        team: unit.team,
-        unitClass: unit.unitClass,
-        position: { ...unit.position },
-      });
-
-      const path = this.moveSubmissions.get(unit.id) ?? [];
-      submissions.push({ unitId: unit.id, path });
-    }
-
-    // Record moves for the turn record
-    const moves = new Map<string, Direction[]>();
-    for (const [id, path] of this.moveSubmissions) {
-      moves.set(id, [...path]);
-    }
-
-    // 3. Resolve movements
-    const moveResults = resolveMovements(moveUnits, submissions, this.validTiles);
-
-    // 4. Update unit positions
-    for (const result of moveResults) {
-      const unit = this.units.find((u) => u.id === result.unitId)!;
-      unit.position = { ...result.to };
-
-      // If unit is carrying a flag, update flag position too
-      if (unit.carryingFlag) {
-        const enemyTeam: 'A' | 'B' = unit.team === 'A' ? 'B' : 'A';
-        const carriedFlag = this.flags[enemyTeam].find(f => f.carrierId === unit.id);
-        if (carriedFlag) {
-          carriedFlag.position = { ...result.to };
-        }
-      }
-    }
-
-    // 5. Resolve combat
-    const combatUnits: CombatUnit[] = this.units
-      .filter((u) => u.alive)
-      .map((u) => ({
-        id: u.id,
-        team: u.team,
-        unitClass: u.unitClass,
-        position: { ...u.position },
-      }));
-
-    const combatResult = resolveCombat(combatUnits, this.wallSet);
-
-    // 6. Process deaths
-    const flagEvents: string[] = [];
-
-    for (const deadId of combatResult.deaths) {
-      const unit = this.units.find((u) => u.id === deadId)!;
-      unit.alive = false;
-
-      // If carrying a flag, drop it back to its home base
-      if (unit.carryingFlag) {
-        unit.carryingFlag = false;
-        const enemyTeam: 'A' | 'B' = unit.team === 'A' ? 'B' : 'A';
-        // Find which enemy flag this unit was carrying
-        const droppedFlag = this.flags[enemyTeam].find(f => f.carrierId === unit.id);
-        if (droppedFlag) {
-          droppedFlag.carried = false;
-          droppedFlag.carrierId = undefined;
-          // Return to the flag's original base position
-          const baseIdx = this.flags[enemyTeam].indexOf(droppedFlag);
-          droppedFlag.position = { ...this.map.bases[enemyTeam][baseIdx].flag };
-          flagEvents.push(
-            `${unit.id} died carrying ${enemyTeam}'s flag — flag returned to base`,
-          );
-        }
-      }
-    }
-
-    // 7. Check flag pickups (one flag per unit)
-    for (const unit of this.units) {
-      if (!unit.alive || unit.carryingFlag) continue;
-
+    if (unit.carryingFlag) {
+      unit.carryingFlag = false;
       const enemyTeam: 'A' | 'B' = unit.team === 'A' ? 'B' : 'A';
-      for (const enemyFlag of this.flags[enemyTeam]) {
-        if (
-          !enemyFlag.carried &&
-          hexEquals(unit.position, enemyFlag.position)
-        ) {
-          enemyFlag.carried = true;
-          enemyFlag.carrierId = unit.id;
-          unit.carryingFlag = true;
-          flagEvents.push(`${unit.id} picked up ${enemyTeam}'s flag`);
-          break; // one flag per unit
-        }
+      const droppedFlag = flags[enemyTeam].find(f => f.carrierId === unit.id);
+      if (droppedFlag) {
+        droppedFlag.carried = false;
+        droppedFlag.carrierId = undefined;
+        const baseIdx = flags[enemyTeam].indexOf(droppedFlag);
+        droppedFlag.position = { ...mapBases[enemyTeam][baseIdx].flag };
+        flagEvents.push(
+          `${unit.id} died carrying ${enemyTeam}'s flag — flag returned to base`,
+        );
       }
     }
+  }
 
-    // 8. Check win condition — carrier reaches any of own base flag hexes
-    let scored = false;
-    for (const unit of this.units) {
-      if (!unit.alive || !unit.carryingFlag) continue;
+  // 7. Check flag pickups
+  for (const unit of units) {
+    if (!unit.alive || unit.carryingFlag) continue;
 
-      // Check if at any of own team's base flag positions
-      const homeBases = this.map.bases[unit.team];
-      const atHome = homeBases.some(base => hexEquals(unit.position, base.flag));
-      if (atHome) {
-        this.score[unit.team]++;
-        flagEvents.push(
-          `${unit.id} captured the flag! Team ${unit.team} scores!`,
-        );
-
-        // Reset the captured flag
-        const enemyTeam: 'A' | 'B' = unit.team === 'A' ? 'B' : 'A';
-        const capturedFlag = this.flags[enemyTeam].find(f => f.carrierId === unit.id);
-        if (capturedFlag) {
-          const baseIdx = this.flags[enemyTeam].indexOf(capturedFlag);
-          capturedFlag.carried = false;
-          capturedFlag.carrierId = undefined;
-          capturedFlag.position = { ...this.map.bases[enemyTeam][baseIdx].flag };
-        }
-        unit.carryingFlag = false;
-
-        this.phase = 'finished';
-        this.winner = unit.team;
-        scored = true;
+    const enemyTeam: 'A' | 'B' = unit.team === 'A' ? 'B' : 'A';
+    for (const enemyFlag of flags[enemyTeam]) {
+      if (!enemyFlag.carried && hexEquals(unit.position, enemyFlag.position)) {
+        enemyFlag.carried = true;
+        enemyFlag.carrierId = unit.id;
+        unit.carryingFlag = true;
+        flagEvents.push(`${unit.id} picked up ${enemyTeam}'s flag`);
         break;
       }
     }
-
-    // 9. Prepare for next turn
-    // Respawn dead units at team spawn hexes (distribute across all bases)
-    const spawnCountA = { current: 0 };
-    const spawnCountB = { current: 0 };
-    const allSpawnsA = this.map.bases.A.flatMap(b => b.spawns);
-    const allSpawnsB = this.map.bases.B.flatMap(b => b.spawns);
-
-    for (const unit of this.units) {
-      if (unit.alive) continue;
-
-      const spawns = unit.team === 'A' ? allSpawnsA : allSpawnsB;
-      const counter = unit.team === 'A' ? spawnCountA : spawnCountB;
-      unit.position = { ...spawns[counter.current % spawns.length] };
-      counter.current++;
-      unit.alive = true;
-    }
-
-    // Record post-move positions
-    const unitPositionsAfter = new Map<string, Hex>();
-    for (const unit of this.units) {
-      unitPositionsAfter.set(unit.id, { ...unit.position });
-    }
-
-    // Collect messages for this turn
-    const turnMessages = [
-      ...this.teamMessages.A.filter((m) => m.turn === currentTurn),
-      ...this.teamMessages.B.filter((m) => m.turn === currentTurn),
-    ];
-
-    // Build turn record
-    const record: TurnRecord = {
-      turn: currentTurn,
-      moves,
-      unitPositionsBefore,
-      unitPositionsAfter,
-      kills: combatResult.kills,
-      flagEvents,
-      messages: turnMessages,
-    };
-    this.turnHistory.push(record);
-
-    // Clear move submissions
-    this.moveSubmissions.clear();
-
-    // Increment turn
-    this.turn++;
-
-    // Check turn limit (draw)
-    if (!scored && this.turn > this.config.turnLimit) {
-      this.phase = 'finished';
-      this.winner = null;
-    }
-
-    return record;
   }
 
-  getTurnHistory(): TurnRecord[] {
-    return this.turnHistory;
+  // 8. Check win condition
+  let scored = false;
+  for (const unit of units) {
+    if (!unit.alive || !unit.carryingFlag) continue;
+
+    const homeBases = mapBases[unit.team];
+    const atHome = homeBases.some((base: { flag: Hex }) => hexEquals(unit.position, base.flag));
+    if (atHome) {
+      score[unit.team]++;
+      flagEvents.push(`${unit.id} captured the flag! Team ${unit.team} scores!`);
+
+      const enemyTeam: 'A' | 'B' = unit.team === 'A' ? 'B' : 'A';
+      const capturedFlag = flags[enemyTeam].find(f => f.carrierId === unit.id);
+      if (capturedFlag) {
+        const baseIdx = flags[enemyTeam].indexOf(capturedFlag);
+        capturedFlag.carried = false;
+        capturedFlag.carrierId = undefined;
+        capturedFlag.position = { ...mapBases[enemyTeam][baseIdx].flag };
+      }
+      unit.carryingFlag = false;
+
+      phase = 'finished';
+      winner = unit.team;
+      scored = true;
+      break;
+    }
   }
 
-  isGameOver(): boolean {
-    return this.phase === 'finished';
+  // 9. Respawn dead units
+  const spawnCountA = { current: 0 };
+  const spawnCountB = { current: 0 };
+  const allSpawnsA = mapBases.A.flatMap((b: { spawns: Hex[] }) => b.spawns);
+  const allSpawnsB = mapBases.B.flatMap((b: { spawns: Hex[] }) => b.spawns);
+
+  for (const unit of units) {
+    if (unit.alive) continue;
+    const spawns = unit.team === 'A' ? allSpawnsA : allSpawnsB;
+    const counter = unit.team === 'A' ? spawnCountA : spawnCountB;
+    unit.position = { ...spawns[counter.current % spawns.length] };
+    counter.current++;
+    unit.alive = true;
   }
+
+  // Record post-move positions
+  const unitPositionsAfter = new Map<string, Hex>();
+  for (const unit of units) {
+    unitPositionsAfter.set(unit.id, { ...unit.position });
+  }
+
+  // Collect messages for this turn
+  const turnMessages = [
+    ...state.teamMessages.A.filter((m) => m.turn === currentTurn),
+    ...state.teamMessages.B.filter((m) => m.turn === currentTurn),
+  ];
+
+  const record: TurnRecord = {
+    turn: currentTurn,
+    moves,
+    unitPositionsBefore,
+    unitPositionsAfter,
+    kills: combatResult.kills,
+    flagEvents,
+    messages: turnMessages,
+  };
+
+  const newTurn = currentTurn + 1;
+
+  // Check turn limit (draw)
+  if (!scored && newTurn > state.config.turnLimit) {
+    phase = 'finished';
+    winner = null;
+  }
+
+  const newState: CtlGameState = {
+    turn: newTurn,
+    phase,
+    units,
+    flags,
+    score,
+    winner,
+    config: state.config,
+    mapTiles: state.mapTiles,
+    mapRadius: state.mapRadius,
+    mapBases: state.mapBases,
+    moveSubmissions: [], // cleared after resolution
+    teamMessages: state.teamMessages,
+  };
+
+  return { state: newState, record };
+}
+
+/**
+ * Build the fog-of-war filtered state for a specific agent.
+ */
+export function getStateForAgent(
+  state: CtlGameState,
+  agentId: string,
+  /** Moves already submitted this turn (may be tracked externally) */
+  submittedMoves?: Set<string>,
+  /** Message cursor — only return messages after this turn */
+  messageCursor?: number,
+): GameState {
+  const unit = state.units.find((u) => u.id === agentId);
+  if (!unit) throw new Error(`Unknown agent: ${agentId}`);
+
+  const team = unit.team;
+  const enemyTeam: 'A' | 'B' = team === 'A' ? 'B' : 'A';
+  const { wallSet } = computeTileSets(state.mapTiles);
+  const tiles = new Map(state.mapTiles.map(([k, v]) => [k, v]));
+
+  // Fog of war
+  const fogUnits: FogUnit[] = state.units.map((u) => ({
+    id: u.id,
+    team: u.team,
+    unitClass: u.unitClass,
+    position: u.position,
+    alive: u.alive,
+  }));
+
+  const viewer: FogUnit = {
+    id: unit.id,
+    team: unit.team,
+    unitClass: unit.unitClass,
+    position: unit.position,
+    alive: unit.alive,
+  };
+
+  const flagsForFog = {
+    A: state.flags.A.map(f => ({
+      position: f.position,
+      carried: f.carried,
+      carrierId: f.carrierId,
+    })),
+    B: state.flags.B.map(f => ({
+      position: f.position,
+      carried: f.carried,
+      carrierId: f.carrierId,
+    })),
+  };
+
+  const visibleTiles = buildVisibleState(viewer, fogUnits, wallSet, tiles, flagsForFog);
+
+  // Your flag status
+  const yourFlags = state.flags[team];
+  let yourFlagStatus: 'at_base' | 'carried' | 'unknown' = 'at_base';
+  for (const f of yourFlags) {
+    if (f.carried) { yourFlagStatus = 'carried'; break; }
+  }
+
+  // Enemy flag status
+  const enemyFlags = state.flags[enemyTeam];
+  let enemyFlagStatus: 'at_base' | 'carried_by_you' | 'carried_by_ally' | 'unknown' = 'unknown';
+  for (const ef of enemyFlags) {
+    if (ef.carried && ef.carrierId === agentId) {
+      enemyFlagStatus = 'carried_by_you';
+      break;
+    } else if (ef.carried && ef.carrierId) {
+      const carrier = state.units.find((u) => u.id === ef.carrierId);
+      if (carrier && carrier.team === team) {
+        enemyFlagStatus = 'carried_by_ally';
+      }
+    } else if (!ef.carried) {
+      const enemyFlagKey = hexToString(ef.position);
+      const isVisible = visibleTiles.some(
+        (t) => hexToString({ q: t.q, r: t.r }) === enemyFlagKey,
+      );
+      if (isVisible && enemyFlagStatus === 'unknown') {
+        enemyFlagStatus = 'at_base';
+      }
+    }
+  }
+
+  // Messages since cursor
+  const since = messageCursor ?? -1;
+  const messages = state.teamMessages[team].filter((m) => m.turn > since);
+
+  // Check if this agent has submitted a move
+  const moveSubmitted = submittedMoves
+    ? submittedMoves.has(agentId)
+    : new Map(state.moveSubmissions).has(agentId);
+
+  return {
+    turn: state.turn,
+    phase: state.phase,
+    yourUnit: {
+      id: unit.id,
+      unitClass: unit.unitClass,
+      position: { ...unit.position },
+      carryingFlag: unit.carryingFlag,
+      alive: unit.alive,
+    },
+    visibleTiles,
+    yourFlag: { status: yourFlagStatus },
+    enemyFlag: { status: enemyFlagStatus },
+    messagesSinceLastCheck: messages,
+    timeRemainingSeconds: state.config.turnTimerSeconds,
+    moveSubmitted,
+    score: {
+      yourTeam: state.score[team],
+      enemyTeam: state.score[enemyTeam],
+    },
+  };
+}
+
+/**
+ * Get team messages for an agent, optionally since a specific turn.
+ */
+export function getTeamMessages(
+  state: CtlGameState,
+  playerId: string,
+  sinceTurn?: number,
+): TeamMessage[] {
+  const unit = state.units.find((u) => u.id === playerId);
+  if (!unit) return [];
+  const since = sinceTurn ?? 0;
+  return state.teamMessages[unit.team].filter((m) => m.turn >= since);
+}
+
+/**
+ * Is the game over?
+ */
+export function isGameOver(state: CtlGameState): boolean {
+  return state.phase === 'finished';
 }

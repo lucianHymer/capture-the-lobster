@@ -490,11 +490,11 @@ npm run test --workspaces --if-present
 
 **Changes to `packages/server/src/index.ts`:**
 ```typescript
-import { GameFramework } from '@lobster/platform';
-import { CaptureTheLobsterPlugin } from '@lobster/games-ctl';
-import { BasicChatPlugin } from '@lobster/plugin-chat';
-import { EloPlugin } from '@lobster/plugin-elo';
-import { TeamFormationPhase, ClassSelectionPhase } from '@lobster/games-ctl/phases';
+import { GameFramework } from '@coordination-games/platform';
+import { CaptureTheLobsterPlugin } from '@coordination-games/game-ctl';
+import { BasicChatPlugin } from '@coordination-games/plugin-chat';
+import { EloPlugin } from '@coordination-games/plugin-elo';
+import { TeamFormationPhase, ClassSelectionPhase } from '@coordination-games/game-ctl/phases';
 
 const framework = new GameFramework({ turnTimeoutMs: 30000 });
 framework.registerGame(CaptureTheLobsterPlugin);

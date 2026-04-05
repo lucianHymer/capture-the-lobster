@@ -28,6 +28,9 @@ export {
   PHASE_TOOLS,
 } from './mcp.js';
 
+// Generic game session
+export { GameSession } from './game-session.js';
+
 // Server-side framework
 export {
   GameFramework,

@@ -6,14 +6,12 @@ import { fileURLToPath } from 'url';
 import crypto from 'node:crypto';
 
 import {
-  GameManager,
   GamePhase,
   GameUnit,
   FlagState,
   TeamMessage,
   TurnRecord,
   UnitClass,
-  ALL_DIRECTIONS,
   Direction,
   Hex,
   generateMap,
@@ -25,7 +23,9 @@ import {
   LobbyManager as EngineLobbyManager,
   getMapRadiusForTeamSize,
   getTurnLimitForRadius,
-} from '@lobster/games-ctl';
+  CaptureTheLobsterPlugin,
+  CtlOutcome,
+} from '@coordination-games/game-ctl';
 import { EloTracker } from './elo.js';
 import { runAllBotsTurn, createBotSessions, BotSession } from './claude-bot.js';
 import { LobbyRunner, LobbyRunnerState } from './lobby-runner.js';
@@ -37,8 +37,9 @@ import {
   getAgentName,
 } from './mcp-http.js';
 import { createRelayRouter } from './relay.js';
-import { buildResultFromGameManager, computePayoutsFromGameManager, getFramework } from './coordination.js';
 import { GameRelay, type RelayMessage } from './typed-relay.js';
+import { GameSession } from './game-session.js';
+import { buildGameMerkleTree, type MerkleLeafData } from '@coordination-games/platform';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -104,7 +105,7 @@ export interface ExternalSlot {
 }
 
 export interface GameRoom {
-  game: GameManager;
+  game: GameSession;
   spectators: Set<WebSocket>;
   stateHistory: SpectatorState[];   // indexed by turn
   spectatorDelay: number;           // turns of delay (default 5)
@@ -114,7 +115,6 @@ export interface GameRoom {
   botMeta: { id: string; unitClass: UnitClass; team: 'A' | 'B' }[];
   botSessions: BotSession[];
   finished: boolean;
-  useClaudeBots: boolean;
   turnInProgress: boolean;
   // External agent slots
   externalSlots: Map<string, ExternalSlot>;  // agentId -> slot info
@@ -133,6 +133,66 @@ export interface GameRoom {
 }
 
 // ---------------------------------------------------------------------------
+// Game result helpers
+// ---------------------------------------------------------------------------
+
+function buildGameResultFromSession(
+  session: GameSession,
+  gameId: string,
+  playerIds: string[],
+) {
+  const turnHistory = session.getTurnHistory();
+  const turns = turnHistory.map((record) => ({
+    turnNumber: record.turn,
+    moves: [...record.moves.entries()].map(([playerId, path]) => ({
+      turnNumber: record.turn,
+      playerId,
+      moveData: JSON.stringify(path),
+    } as MerkleLeafData)),
+  }));
+  const tree = buildGameMerkleTree(turns);
+
+  return {
+    gameId,
+    gameType: 'capture-the-lobster',
+    players: playerIds,
+    outcome: {
+      winner: session.winner,
+      score: { ...session.score },
+      turnCount: session.turn,
+    },
+    movesRoot: tree.root,
+    configHash: '',
+    turnCount: turnHistory.length,
+    timestamp: Date.now(),
+  };
+}
+
+function computePayoutsFromSession(
+  session: GameSession,
+  playerIds: string[],
+): Map<string, number> {
+  const outcome: CtlOutcome = {
+    winner: session.winner,
+    score: { ...session.score },
+    turnCount: session.turn,
+    playerStats: new Map(),
+  };
+
+  for (const unit of session.units) {
+    outcome.playerStats.set(unit.id, {
+      team: unit.team,
+      kills: 0,
+      deaths: 0,
+      flagCarries: 0,
+      flagCaptures: 0,
+    });
+  }
+
+  return CaptureTheLobsterPlugin.computePayouts(outcome, playerIds);
+}
+
+// ---------------------------------------------------------------------------
 // Bot display names (shared with lobby-runner)
 // ---------------------------------------------------------------------------
 
@@ -146,8 +206,9 @@ const BOT_DISPLAY_NAMES = [
 // Spectator state builder
 // ---------------------------------------------------------------------------
 
-function buildSpectatorState(game: GameManager, handles: Record<string, string> = {}): SpectatorState {
-  const { map, units, flags, turn, phase, config, score } = game;
+function buildSpectatorState(game: GameSession, handles: Record<string, string> = {}): SpectatorState {
+  const map = game.map;
+  const { units, flags, turn, phase, config, score } = game;
 
   // Build full tile array (no fog — spectators see everything)
   const tiles: SpectatorTile[] = [];
@@ -173,7 +234,7 @@ function buildSpectatorState(game: GameManager, handles: Record<string, string> 
     const [qStr, rStr] = key.split(',');
     const q = Number(qStr);
     const r = Number(rStr);
-    const tile: SpectatorTile = { q, r, type: tileType };
+    const tile: SpectatorTile = { q, r, type: tileType as TileType };
 
     const unitsHere = unitsByHex.get(key);
     if (unitsHere && unitsHere.length > 0) {
@@ -313,7 +374,6 @@ export class GameServer {
   private server: http.Server;
   private wss: WebSocketServer;
   readonly elo: EloTracker;
-  private useClaudeBots: boolean = false;
 
   readonly games: Map<string, GameRoom> = new Map();
   readonly lobbies: Map<string, LobbyRoom> = new Map();
@@ -344,17 +404,13 @@ export class GameServer {
       });
     }, 30000);
 
-    // Enable Claude Agent SDK bots (uses local credentials from ~/.claude)
-    this.useClaudeBots = true;
-    console.log('Claude Agent SDK bots enabled (haiku)');
-
     this.setupRoutes();
     this.setupWebSocket();
 
     // Mount the MCP Streamable HTTP endpoint
     mountMcpEndpoint(
       this.app,
-      // Game resolver: find the GameManager for an agentId
+      // Game resolver: find the GameSession for an agentId
       (agentId: string) => {
         const gameId = this.agentToGame.get(agentId);
         if (!gameId) return null;
@@ -376,7 +432,7 @@ export class GameServer {
       (gameId: string, agentId?: string, message?: string) => {
         const room = this.games.get(gameId);
         if (room) {
-          // Push chat through the typed relay (alongside the direct GameManager chat)
+          // Push chat through the typed relay
           if (agentId && message) {
             const phase = room.game.phase;
             const scope = (phase === 'in_progress' || phase === 'pre_game') ? 'team' : 'all';
@@ -528,16 +584,11 @@ export class GameServer {
 
     // GET /framework — coordination framework info (available games, version)
     router.get('/framework', (_req, res) => {
-      try {
-        const fw = getFramework();
-        res.json({
-          version: '0.1.0',
-          games: fw.listGameTypes(),
-          status: 'active',
-        });
-      } catch {
-        res.json({ version: '0.1.0', games: ['capture-the-lobster'], status: 'initializing' });
-      }
+      res.json({
+        version: '0.1.0',
+        games: ['capture-the-lobster'],
+        status: 'active',
+      });
     });
 
     // List active lobbies
@@ -705,7 +756,7 @@ export class GameServer {
         pluginId: pluginId ?? 'unknown',
       });
 
-      // Also push through GameManager chat if it's a messaging type (backwards compat)
+      // Also push through game session chat if it's a messaging type
       if (type === 'messaging' && data?.body) {
         room.game.submitChat(sender, data.body);
       }
@@ -820,17 +871,16 @@ export class GameServer {
 
       try {
         const playerIds = room.game.units.map((u) => u.id);
-        const result = buildResultFromGameManager(room.game, room.game.gameId, playerIds);
-        const payouts = computePayoutsFromGameManager(room.game, playerIds);
+        const result = buildGameResultFromSession(room.game, req.params.id, playerIds);
+        const payouts = computePayoutsFromSession(room.game, playerIds);
         res.json({
           ...result,
           payouts: Object.fromEntries(payouts),
         });
       } catch (err: any) {
-        // Fallback to basic result if framework fails
         const game = room.game;
         res.json({
-          gameId: game.gameId,
+          gameId: req.params.id,
           gameType: 'capture-the-lobster',
           players: game.units.map((u) => u.id),
           outcome: { winner: game.winner, score: game.score },
@@ -974,7 +1024,7 @@ export class GameServer {
     return count;
   }
 
-  createBotGame(teamSize: number = 4): { gameId: string; game: GameManager } {
+  createBotGame(teamSize: number = 4): { gameId: string; game: GameSession } {
     const gameId = crypto.randomUUID();
     const classes: UnitClass[] = ['rogue', 'knight', 'mage'];
 
@@ -1004,7 +1054,7 @@ export class GameServer {
 
     const radius = getMapRadiusForTeamSize(teamSize);
     const gameMap = generateMap({ radius, teamSize });
-    const game = new GameManager(gameId, gameMap, players, {
+    const game = GameSession.create(gameId, gameMap, players, {
       teamSize,
       turnLimit: getTurnLimitForRadius(radius),
     });
@@ -1023,7 +1073,6 @@ export class GameServer {
       botMeta: players,
       botSessions: createBotSessions(players),
       finished: false,
-      useClaudeBots: this.useClaudeBots,
       turnInProgress: false,
       externalSlots: new Map(),
       turnResolve: null,
@@ -1234,8 +1283,8 @@ export class GameServer {
     // Build game result with Merkle root for future on-chain anchoring
     try {
       const playerIds = room.game.units.map((u) => u.id);
-      const result = buildResultFromGameManager(room.game, room.game.gameId, playerIds);
-      const payouts = computePayoutsFromGameManager(room.game, playerIds);
+      const result = buildGameResultFromSession(room.game, room.game.state.turn.toString(), playerIds);
+      const payouts = computePayoutsFromSession(room.game, playerIds);
       console.log(`[Coordination] Game result built. Merkle root: ${result.movesRoot.slice(0, 16)}... Turns: ${result.turnCount}`);
       const payoutSummary = [...payouts.entries()].map(([id, delta]) => `${id}:${delta > 0 ? '+' : ''}${delta}`).join(', ');
       console.log(`[Coordination] Payouts: ${payoutSummary}`);
@@ -1358,7 +1407,7 @@ export class GameServer {
     );
     const radius = getMapRadiusForTeamSize(teamSize);
     const gameMap = generateMap({ radius, teamSize });
-    const game = new GameManager(gameId, gameMap, players, {
+    const game = GameSession.create(gameId, gameMap, players, {
       teamSize,
       turnLimit: getTurnLimitForRadius(radius),
     });
@@ -1376,7 +1425,6 @@ export class GameServer {
       botMeta: players,
       botSessions: createBotSessions(players.filter((p) => !p.id.startsWith('ext_'))),
       finished: false,
-      useClaudeBots: this.useClaudeBots,
       turnInProgress: false,
       externalSlots,
       turnResolve: null,

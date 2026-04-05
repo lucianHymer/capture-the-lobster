@@ -1,5 +1,5 @@
 {
-  "name": "@lobster/server",
+  "name": "@coordination-games/server",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -14,10 +14,10 @@
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.2.79",
     "@anthropic-ai/sdk": "^0.80.0",
-    "@lobster/platform": "*",
-    "@lobster/games-ctl": "*",
-    "@lobster/plugin-chat": "*",
-    "@lobster/plugin-elo": "*",
+    "@coordination-games/platform": "*",
+    "@coordination-games/game-ctl": "*",
+    "@coordination-games/plugin-chat": "*",
+    "@coordination-games/plugin-elo": "*",
     "@modelcontextprotocol/sdk": "^1.0.0",
     "better-sqlite3": "^11.0.0",
     "ethers": "^6.16.0",

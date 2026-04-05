@@ -1,5 +1,5 @@
 {
-  "name": "@lobster/plugin-elo",
+  "name": "@coordination-games/plugin-elo",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -8,7 +8,7 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@lobster/platform": "*",
+    "@coordination-games/platform": "*",
     "better-sqlite3": "^11.0.0"
   },
   "devDependencies": {

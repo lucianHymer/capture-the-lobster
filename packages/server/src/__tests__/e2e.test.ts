@@ -37,7 +37,6 @@ describe('E2E: Full stack', () => {
       env: {
         ...process.env,
         PORT: String(PORT),
-        USE_CLAUDE_BOTS: 'false',
       },
       stdio: 'pipe',
     });

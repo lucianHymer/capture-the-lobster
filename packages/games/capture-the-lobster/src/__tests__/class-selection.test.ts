@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { ClassSelectionPhase } from '../phases/class-selection.js';
-import type { AgentInfo, PhaseContext } from '@lobster/platform';
+import type { AgentInfo, PhaseContext } from '@coordination-games/platform';
 
 function makeCtx(players: AgentInfo[], config: Record<string, any> = {}): PhaseContext {
   return {

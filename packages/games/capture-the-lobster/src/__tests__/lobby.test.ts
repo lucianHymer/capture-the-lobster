@@ -140,7 +140,7 @@ describe('LobbyManager', () => {
 
       const result = lobby.proposeTeam('a1', 'a3');
       expect(result.success).toBe(false);
-      expect(result.error).toBe('both agents already on teams');
+      expect(result.error).toContain('Both agents are already on teams');
     });
   });
 
@@ -282,8 +282,8 @@ describe('LobbyManager', () => {
       expect(a1.elo).toBe(1500);
       expect(a1.team).toBe(t.teamId);
 
-      expect(state.teams[t.teamId!]).toContain('a1');
-      expect(state.teams[t.teamId!]).toContain('a2');
+      expect(state.teams[t.teamId!].members).toContain('a1');
+      expect(state.teams[t.teamId!].members).toContain('a2');
     });
   });
 
@@ -396,7 +396,7 @@ describe('LobbyManager', () => {
   // --- createGame ---
 
   describe('createGame', () => {
-    it('produces a valid GameManager', () => {
+    it('produces a valid game state', () => {
       lobby.addAgent(makeAgent('a1'));
       lobby.addAgent(makeAgent('a2'));
       lobby.addAgent(makeAgent('a3'));
@@ -407,29 +407,31 @@ describe('LobbyManager', () => {
       lobby.chooseClass('a2', 'mage');
       // a3 and a4 don't choose — should default to rogue
 
-      const game = lobby.createGame('test-seed');
+      const { state, players } = lobby.createGame('test-seed');
 
-      expect(game).toBeDefined();
-      expect(game.gameId).toBe('game_test-lobby');
-      expect(game.phase).toBe('in_progress');
-      expect(game.units.length).toBe(4);
+      expect(state).toBeDefined();
+      expect(state.phase).toBe('in_progress');
+      expect(state.units.length).toBe(4);
 
       // Check classes
-      const a1Unit = game.units.find((u) => u.id === 'a1')!;
+      const a1Unit = state.units.find((u) => u.id === 'a1')!;
       expect(a1Unit.unitClass).toBe('knight');
       expect(a1Unit.team).toBe('A');
 
-      const a2Unit = game.units.find((u) => u.id === 'a2')!;
+      const a2Unit = state.units.find((u) => u.id === 'a2')!;
       expect(a2Unit.unitClass).toBe('mage');
       expect(a2Unit.team).toBe('A');
 
-      const a3Unit = game.units.find((u) => u.id === 'a3')!;
+      const a3Unit = state.units.find((u) => u.id === 'a3')!;
       expect(a3Unit.unitClass).toBe('rogue');
       expect(a3Unit.team).toBe('B');
 
-      const a4Unit = game.units.find((u) => u.id === 'a4')!;
+      const a4Unit = state.units.find((u) => u.id === 'a4')!;
       expect(a4Unit.unitClass).toBe('rogue');
       expect(a4Unit.team).toBe('B');
+
+      // Players list should match
+      expect(players.length).toBe(4);
     });
 
     it('errors when not in pre-game phase', () => {

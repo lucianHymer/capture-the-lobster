@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { createEloPlugin, EloTracker } from '../index.js';
-import type { AgentInfo } from '@lobster/platform';
+import type { AgentInfo } from '@coordination-games/platform';
 
 describe('EloPlugin', () => {
   let plugin: ReturnType<typeof createEloPlugin>;

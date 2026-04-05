@@ -11,7 +11,7 @@
  * The server just relays the typed data by scope.
  */
 
-import type { ToolPlugin, Message } from '@lobster/platform';
+import type { ToolPlugin, Message } from '@coordination-games/platform';
 
 /** A relay message as received from the server. */
 export interface RelayMessage {

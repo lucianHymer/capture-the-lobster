@@ -114,7 +114,6 @@ agent-browser screenshot screenshots/game-all.png
 
 ## Environment
 
-- **Env var `USE_CLAUDE_BOTS`**: Set to `"false"` to disable Claude bots and use heuristic bots instead. Default: enabled.
 - **Env var `PORT`**: Server port. Default: 3000. Use 5173 to match Cloudflare tunnel config.
 - **Claude Agent SDK** uses local `~/.claude` credentials (Max plan). No API key needed.
 
@@ -125,7 +124,7 @@ Current beta defaults (in `api.ts`):
 - Team size: 2v2 through 6v6 (configurable via lobby creation)
 - Turn limit: scales with radius via `getTurnLimitForRadius()` (20 + radius*2)
 - Spectator delay: 0 (no delay for testing)
-- Bot turn interval: 8 seconds (Claude bots), 2 seconds (heuristic bots)
+- Bot turn interval: 8 seconds (Claude bots)
 - Lobby timeout: 2 minutes (configurable)
 
 ## External Agent MCP Endpoint
@@ -194,7 +193,7 @@ The HexGrid component (`packages/web/src/components/HexGrid.tsx`) renders:
 ## File Map
 
 ```
-packages/platform/src/           — Generic game server framework (@lobster/platform)
+packages/platform/src/           — Generic game server framework (@coordination-games/platform)
   types.ts                       — All shared types (CoordinationGame, ToolPlugin, LobbyPhase, Message, etc.)
   plugin-loader.ts               — Plugin registry, topological sort, pipeline builder
   mcp.ts                         — Phase-aware MCP tool visibility, dynamic guide generator
@@ -205,7 +204,7 @@ packages/platform/src/           — Generic game server framework (@lobster/pla
     auth.ts                      — Wallet-based auth
     balance.ts                   — Vibes tracking
 
-packages/games/capture-the-lobster/src/  — CtL game plugin (@lobster/games-ctl)
+packages/games/capture-the-lobster/src/  — CtL game plugin (@coordination-games/game-ctl)
   plugin.ts                      — CaptureTheLobsterPlugin (CoordinationGame impl + LobbyConfig)
   hex.ts                         — Axial hex coordinates (unchanged)
   los.ts                         — Line-of-sight (unchanged)
@@ -213,30 +212,26 @@ packages/games/capture-the-lobster/src/  — CtL game plugin (@lobster/games-ctl
   fog.ts                         — Fog of war (unchanged)
   map.ts                         — Procedural map generation (unchanged)
   movement.ts                    — Movement validation & resolution (unchanged)
-  game.ts                        — GameManager (turn resolution, state)
+  game.ts                        — Pure game functions: createGameState, resolveTurn, getStateForAgent, etc.
   lobby.ts                       — LobbyManager (team formation, pre-game)
   phases/
     team-formation.ts            — LobbyPhase: team proposals, acceptance, auto-merge
     class-selection.ts           — LobbyPhase: pick rogue/knight/mage
 
-packages/plugins/basic-chat/src/ — Chat plugin (@lobster/plugin-chat)
+packages/plugins/basic-chat/src/ — Chat plugin (@coordination-games/plugin-chat)
   index.ts                       — ToolPlugin impl with phase-aware routing, message cursors
 
-packages/plugins/elo/src/        — ELO plugin (@lobster/plugin-elo)
+packages/plugins/elo/src/        — ELO plugin (@coordination-games/plugin-elo)
   index.ts                       — ToolPlugin wrapper around EloTracker
   tracker.ts                     — ELO rating system with SQLite
 
-packages/engine/src/             — Legacy re-export (kept for server compatibility)
-packages/coordination/src/       — Legacy re-export (kept for server compatibility)
-
 packages/server/src/             — Server entry point (wires platform + games + plugins)
   api.ts                         — Express server, REST API, WebSocket spectator feed
-  claude-bot.ts                  — Claude Agent SDK bot harness (testing only)
+  game-session.ts                — Server-side state holder wrapping pure game functions
+  claude-bot.ts                  — Claude Agent SDK bot harness
   lobby-runner.ts                — Lobby orchestrator with Claude bots
   mcp-http.ts                    — Streamable HTTP MCP transport
-  coordination.ts                — Framework bridge (registers CtL plugin)
-  elo.ts                         — ELO tracker (legacy, use @lobster/plugin-elo)
-  bots.ts                        — Heuristic bots (fallback)
+  elo.ts                         — ELO tracker (legacy, use @coordination-games/plugin-elo)
   index.ts                       — Entry point with crash guards
 
 packages/web/src/

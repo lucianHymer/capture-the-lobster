@@ -14,7 +14,7 @@ import {
   LobbyManager,
   LobbyAgent,
   UnitClass,
-} from '@lobster/games-ctl';
+} from '@coordination-games/game-ctl';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -323,12 +323,13 @@ export class LobbyRunner {
         handles[id] = agent.handle;
       }
 
-      const game = this.lobby.createGame();
-      this.gameId = game.gameId;
+      const gameId = `game_${this.lobby.lobbyId}`;
+      this.lobby.createGame(); // transitions lobby to 'starting' phase
+      this.gameId = gameId;
       this.phase = 'game';
       this.emitState();
 
-      this.callbacks.onGameCreated(game.gameId, teamPlayers, handles);
+      this.callbacks.onGameCreated(gameId, teamPlayers, handles);
     } catch (err: any) {
       console.error('Lobby runner error:', err);
       this.phase = 'failed';

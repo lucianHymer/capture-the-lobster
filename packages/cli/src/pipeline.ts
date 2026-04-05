@@ -11,9 +11,9 @@
  *   3. Combine game state + pipeline output for the agent
  */
 
-import { PluginLoader, PluginPipeline } from '@lobster/platform';
-import { BasicChatPlugin } from '@lobster/plugin-chat';
-import type { ToolPlugin } from '@lobster/platform';
+import { PluginLoader, PluginPipeline } from '@coordination-games/platform';
+import { BasicChatPlugin } from '@coordination-games/plugin-chat';
+import type { ToolPlugin } from '@coordination-games/platform';
 
 // Default plugins — always available
 const DEFAULT_PLUGINS: ToolPlugin[] = [BasicChatPlugin];

@@ -3,7 +3,7 @@ import { loadConfig, loadSession, saveSession } from "../config.js";
 import { ApiClient } from "../api-client.js";
 import { McpClient } from "../mcp-client.js";
 import { processState, initPipeline } from "../pipeline.js";
-import { formatChatMessage } from "@lobster/plugin-chat";
+import { formatChatMessage } from "@coordination-games/plugin-chat";
 
 function getMcpClient(config: { serverUrl: string }): McpClient {
   return new McpClient(config.serverUrl);

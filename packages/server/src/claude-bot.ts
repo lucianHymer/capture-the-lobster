@@ -5,10 +5,10 @@ import {
 } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
 import {
-  GameManager,
   Direction,
   UnitClass,
-} from '@lobster/games-ctl';
+} from '@coordination-games/game-ctl';
+import type { GameSession } from './game-session.js';
 
 const VALID_DIRECTIONS: Direction[] = ['N', 'NE', 'SE', 'S', 'SW', 'NW'];
 
@@ -46,7 +46,7 @@ You have 30 SECONDS per turn. Be decisive and aggressive. Always submit a move.`
 /**
  * Create an MCP server with game tools scoped to a specific agent.
  */
-function createGameMcpServer(game: GameManager, agentId: string) {
+function createGameMcpServer(game: GameSession, agentId: string) {
   return createSdkMcpServer({
     name: `lobster-${agentId}`,
     version: '0.1.0',
@@ -105,7 +105,7 @@ export interface BotSession {
  * If the bot has a sessionId, resumes the existing conversation.
  */
 export async function runClaudeBotTurn(
-  game: GameManager,
+  game: GameSession,
   bot: BotSession,
   turn: number,
 ): Promise<void> {
@@ -181,7 +181,7 @@ export function createBotSessions(
  * Run all Claude bots for a single turn in parallel.
  */
 export async function runAllBotsTurn(
-  game: GameManager,
+  game: GameSession,
   sessions: BotSession[],
   turn: number,
 ): Promise<void> {

@@ -31,26 +31,29 @@ function bfsReachable(
 }
 
 describe('generateMap', () => {
-  it('creates all hexes within the given radius', () => {
+  it('creates all hexes within the given radius (plus border ring)', () => {
     const map = generateMap({ radius: 6, seed: 'radius-test' });
-    const expected = hexesInRadius({ q: 0, r: 0 }, 6);
+    // generateMap adds a border ring at radius+1 and reports radius+1
+    const expected = hexesInRadius({ q: 0, r: 0 }, 7);
     expect(map.tiles.size).toBe(expected.length);
     for (const hex of expected) {
       expect(map.tiles.has(hexToString(hex))).toBe(true);
     }
-    expect(map.radius).toBe(6);
+    expect(map.radius).toBe(7); // includes border ring
   });
 
   it('uses default radius of 8 when not specified', () => {
     const map = generateMap({ seed: 'default-radius' });
-    const expected = hexesInRadius({ q: 0, r: 0 }, 8);
+    // Default radius 8 + border ring = 9
+    const expected = hexesInRadius({ q: 0, r: 0 }, 9);
     expect(map.tiles.size).toBe(expected.length);
-    expect(map.radius).toBe(8);
+    expect(map.radius).toBe(9);
   });
 
   it('places bases on opposite sides (A south, B north)', () => {
     const map = generateMap({ radius: 8, seed: 'bases-test' });
-    const { A, B } = map.bases;
+    const A = map.bases.A[0];
+    const B = map.bases.B[0];
 
     // A flag should have high r (south), B flag should have low r (north)
     expect(A.flag.r).toBeGreaterThan(0);
@@ -63,7 +66,8 @@ describe('generateMap', () => {
 
   it('base tiles are never walls', () => {
     const map = generateMap({ radius: 8, seed: 'base-walls-test' });
-    const { A, B } = map.bases;
+    const A = map.bases.A[0];
+    const B = map.bases.B[0];
 
     // Flag hexes
     expect(map.tiles.get(hexToString(A.flag))).toBe('base_a');
@@ -84,7 +88,8 @@ describe('generateMap', () => {
 
   it('spawn hexes are ground tiles adjacent to the flag', () => {
     const map = generateMap({ radius: 8, seed: 'spawns-test' });
-    const { A, B } = map.bases;
+    const A = map.bases.A[0];
+    const B = map.bases.B[0];
 
     // All spawns should be distance 1 from flag
     for (const spawn of A.spawns) {
@@ -94,11 +99,11 @@ describe('generateMap', () => {
       expect(hexDistance(B.flag, spawn)).toBe(1);
     }
 
-    // Should have 3-4 spawns each
-    expect(A.spawns.length).toBeGreaterThanOrEqual(3);
-    expect(A.spawns.length).toBeLessThanOrEqual(4);
-    expect(B.spawns.length).toBeGreaterThanOrEqual(3);
-    expect(B.spawns.length).toBeLessThanOrEqual(4);
+    // Spawn count depends on teamSize (default: ceil(teamSize/flagCount))
+    expect(A.spawns.length).toBeGreaterThanOrEqual(1);
+    expect(A.spawns.length).toBeLessThanOrEqual(6);
+    expect(B.spawns.length).toBeGreaterThanOrEqual(1);
+    expect(B.spawns.length).toBeLessThanOrEqual(6);
   });
 
   it('map is rotationally symmetric (walls mirror at 180°)', () => {
@@ -126,8 +131,8 @@ describe('generateMap', () => {
     const seeds = ['conn-1', 'conn-2', 'conn-3', 'conn-4', 'conn-5'];
     for (const seed of seeds) {
       const map = generateMap({ radius: 8, seed });
-      const flagAKey = hexToString(map.bases.A.flag);
-      const flagBKey = hexToString(map.bases.B.flag);
+      const flagAKey = hexToString(map.bases.A[0].flag);
+      const flagBKey = hexToString(map.bases.B[0].flag);
       const reachable = bfsReachable(flagAKey, map.tiles);
       expect(reachable.has(flagBKey)).toBe(true);
     }
@@ -142,8 +147,8 @@ describe('generateMap', () => {
       expect(map2.tiles.get(key)).toBe(type);
     }
 
-    expect(hexEquals(map1.bases.A.flag, map2.bases.A.flag)).toBe(true);
-    expect(hexEquals(map1.bases.B.flag, map2.bases.B.flag)).toBe(true);
+    expect(hexEquals(map1.bases.A[0].flag, map2.bases.A[0].flag)).toBe(true);
+    expect(hexEquals(map1.bases.B[0].flag, map2.bases.B[0].flag)).toBe(true);
   });
 
   it('different seeds produce different maps', () => {
@@ -177,12 +182,13 @@ describe('generateMap', () => {
 
   it('works with small radius', () => {
     const map = generateMap({ radius: 3, seed: 'small-map' });
-    const expected = hexesInRadius({ q: 0, r: 0 }, 3);
+    // radius 3 + border ring = radius 4
+    const expected = hexesInRadius({ q: 0, r: 0 }, 4);
     expect(map.tiles.size).toBe(expected.length);
 
     // Should still be connected
-    const flagAKey = hexToString(map.bases.A.flag);
-    const flagBKey = hexToString(map.bases.B.flag);
+    const flagAKey = hexToString(map.bases.A[0].flag);
+    const flagBKey = hexToString(map.bases.B[0].flag);
     const reachable = bfsReachable(flagAKey, map.tiles);
     expect(reachable.has(flagBKey)).toBe(true);
   });
@@ -198,8 +204,8 @@ describe('generateMap', () => {
 
   it('connectivity holds under high wall density', () => {
     const map = generateMap({ radius: 8, wallDensity: 0.4, seed: 'dense-walls' });
-    const flagAKey = hexToString(map.bases.A.flag);
-    const flagBKey = hexToString(map.bases.B.flag);
+    const flagAKey = hexToString(map.bases.A[0].flag);
+    const flagBKey = hexToString(map.bases.B[0].flag);
     const reachable = bfsReachable(flagAKey, map.tiles);
     expect(reachable.has(flagBKey)).toBe(true);
   });

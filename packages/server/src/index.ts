@@ -1,6 +1,5 @@
 // Capture the Lobster — Server entry point
 import { GameServer } from './api.js';
-import { getFramework } from './coordination.js';
 import fs from 'fs';
 
 const CRASH_LOG = '/tmp/ctf-crash.log';
@@ -40,6 +39,4 @@ const port = Number(process.env.PORT) || 3000;
 const server = new GameServer();
 server.listen(port);
 
-// Initialize the coordination framework (registers game plugins)
-const framework = getFramework();
-console.log(`[Coordination] Game plugins available: ${framework.listGameTypes().join(', ')}`);
+console.log(`[Server] Game engine: stateless pure functions (capture-the-lobster)`);

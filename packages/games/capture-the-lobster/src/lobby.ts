@@ -2,7 +2,7 @@
 // Manages team formation, pre-game class selection, and game creation
 
 import { UnitClass } from './movement.js';
-import { GameManager, GameConfig, getTurnLimitForRadius } from './game.js';
+import { CtlGameState, GameConfig, createGameState, getTurnLimitForRadius } from './game.js';
 import { generateMap, getMapRadiusForTeamSize } from './map.js';
 
 export interface LobbyAgent {
@@ -418,7 +418,7 @@ export class LobbyManager {
 
   // --- Game Creation ---
 
-  createGame(mapSeed?: string): GameManager {
+  createGame(mapSeed?: string): { state: CtlGameState; players: { id: string; team: 'A' | 'B'; unitClass: UnitClass }[] } {
     if (this.phase !== 'pre_game') {
       throw new Error('Cannot create game outside pre-game phase');
     }
@@ -458,11 +458,7 @@ export class LobbyManager {
       turnLimit: getTurnLimitForRadius(radius),
     };
 
-    return new GameManager(
-      `game_${this.lobbyId}`,
-      map,
-      players,
-      config,
-    );
+    const state = createGameState(map, players, config);
+    return { state, players };
   }
 }

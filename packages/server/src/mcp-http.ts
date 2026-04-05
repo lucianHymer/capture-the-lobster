@@ -11,8 +11,9 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
-import { GameManager, Direction, UnitClass } from '@lobster/games-ctl';
-import { LobbyManager as EngineLobbyManager } from '@lobster/games-ctl';
+import { Direction, UnitClass, CaptureTheLobsterPlugin } from '@coordination-games/game-ctl';
+import { LobbyManager as EngineLobbyManager } from '@coordination-games/game-ctl';
+import type { GameSession } from './game-session.js';
 import crypto from 'node:crypto';
 
 // ---------------------------------------------------------------------------
@@ -106,7 +107,7 @@ const T = { token: z.string().optional().describe("Auth token from signin(). Pas
 // Per-agent MCP server factory
 // ---------------------------------------------------------------------------
 
-export type GameResolver = (agentId: string) => GameManager | null;
+export type GameResolver = (agentId: string) => GameSession | null;
 export type LobbyResolver = (agentId: string) => EngineLobbyManager | null;
 export type RelayResolver = (agentId: string) => import('./typed-relay.js').GameRelay | null;
 export type MoveCallback = (gameId: string, agentId: string) => void;
@@ -567,7 +568,13 @@ Before you can play, allow all Capture the Lobster tools. Without this, you'll b
         availableTools += '- `get_state` — bootstrap/recovery only\n';
       }
 
-      return jsonResult(setupInstructions + GAME_RULES + playerState + availableTools);
+      // Required plugins section
+      const pluginInfo = `\n## Required Plugins\n` +
+        `This game requires: **${(CaptureTheLobsterPlugin.requiredPlugins ?? []).join(', ') || 'none'}**\n` +
+        `Recommended: **${(CaptureTheLobsterPlugin.recommendedPlugins ?? []).join(', ') || 'none'}**\n` +
+        `If you're missing a required plugin, install it before joining.\n`;
+
+      return jsonResult(setupInstructions + GAME_RULES + pluginInfo + playerState + availableTools);
     },
   );
 

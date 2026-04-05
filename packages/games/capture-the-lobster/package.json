@@ -1,5 +1,5 @@
 {
-  "name": "@lobster/games-ctl",
+  "name": "@coordination-games/game-ctl",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -10,7 +10,7 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@lobster/platform": "*"
+    "@coordination-games/platform": "*"
   },
   "devDependencies": {
     "typescript": "^5.4.0",

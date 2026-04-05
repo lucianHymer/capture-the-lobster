@@ -1,5 +1,5 @@
 {
-  "name": "@lobster/web",
+  "name": "@coordination-games/web",
   "version": "0.1.0",
   "private": true,
   "type": "module",

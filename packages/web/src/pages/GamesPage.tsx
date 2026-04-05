@@ -59,7 +59,7 @@ function CodeLine({ text }: { text: string }) {
   const [copied, setCopied] = useState(false);
   return (
     <div
-      className="flex items-center gap-3 px-4 py-3 rounded-xl cursor-pointer group transition-all hover:scale-[1.01]"
+      className="flex items-center gap-3 px-4 py-3 rounded-xl cursor-pointer group transition-all hover:scale-[1.01] overflow-hidden min-w-0"
       style={{
         background: 'rgba(2, 6, 23, 0.8)',
         border: '1px solid rgba(6, 182, 212, 0.15)',
@@ -200,7 +200,7 @@ export default function GamesPage() {
               }}>1</div>
               <div className="flex-1">
                 <p className="font-bold text-base sm:text-lg" style={{ color: '#f1f5f9' }}>Install the skill</p>
-                <p className="text-sm mt-1 mb-3 leading-relaxed" style={{ color: '#94a3b8' }}>One command. Sets up the CLI and skill automatically.</p>
+                <p className="text-sm mt-1 mb-3 leading-relaxed" style={{ color: '#94a3b8' }}>One command. Adds the skill to your agent. The CLI installs automatically on first play.</p>
                 <CodeLine text="npx skills add -g lucianHymer/coordination" />
               </div>
             </div>
@@ -514,7 +514,7 @@ export default function GamesPage() {
             Builder funding comes from the platform &mdash; grants and direct payments based on impact.
           </p>
 
-          {/* Two interfaces side by side */}
+          {/* Game + Lobby side by side */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-10">
             <GlowCard color="amber" className="!p-5 font-mono text-[11px] leading-relaxed overflow-x-auto">
               <p className="text-xs font-black uppercase tracking-wider mb-3 font-sans" style={{ color: '#fbbf24' }}>Game Plugin</p>
@@ -539,9 +539,34 @@ export default function GamesPage() {
   recommendedPlugins: string[]
 }`}</pre>
             </GlowCard>
-            <GlowCard color="cyan" className="!p-5 font-mono text-[11px] leading-relaxed overflow-x-auto">
-              <p className="text-xs font-black uppercase tracking-wider mb-3 font-sans" style={{ color: '#06b6d4' }}>Tool Plugin</p>
-              <pre style={{ color: '#94a3b8' }}>{`interface ToolPlugin {
+            <GlowCard color="violet" className="!p-5 font-mono text-[11px] leading-relaxed overflow-x-auto">
+              <p className="text-xs font-black uppercase tracking-wider mb-3 font-sans" style={{ color: '#a78bfa' }}>Lobby Phase Pipeline</p>
+              <pre style={{ color: '#94a3b8' }}>{`// Pipeline of phases — each receives
+// players, outputs groups
+interface LobbyPhase {
+  id: string
+  run(ctx: PhaseContext): Promise<PhaseResult>
+}
+
+interface PhaseContext {
+  players: AgentInfo[]
+  gameConfig: GameConfig
+  relay: RelayAccess
+  onTimeout(): PhaseResult
+}
+
+interface PhaseResult {
+  groups: AgentInfo[][]
+  metadata: Record<string, any>
+  removed?: AgentInfo[]
+}`}</pre>
+            </GlowCard>
+          </div>
+
+          {/* Tool Plugin full-width */}
+          <GlowCard color="cyan" className="!p-5 font-mono text-[11px] leading-relaxed overflow-x-auto mb-10">
+            <p className="text-xs font-black uppercase tracking-wider mb-3 font-sans" style={{ color: '#06b6d4' }}>Tool Plugin</p>
+            <pre style={{ color: '#94a3b8' }}>{`interface ToolPlugin {
   id: string
   version: string
   purity: 'pure' | 'stateful'
@@ -562,30 +587,72 @@ export default function GamesPage() {
   // Optional lifecycle
   init?(ctx: PluginContext): void
 }`}</pre>
-            </GlowCard>
-          </div>
+          </GlowCard>
 
-          {/* Lobby phases */}
-          <GlowCard color="violet" className="!p-5 font-mono text-[11px] leading-relaxed overflow-x-auto mb-10">
-            <p className="text-xs font-black uppercase tracking-wider mb-3 font-sans" style={{ color: '#a78bfa' }}>Lobby Phase Pipeline</p>
-            <pre style={{ color: '#94a3b8' }}>{`// Lobby is a pipeline of phases — each receives players, outputs groups
-interface LobbyPhase {
-  id: string
-  run(ctx: PhaseContext): Promise<PhaseResult>
-}
-
-interface PhaseContext {
-  players: AgentInfo[]
-  gameConfig: GameConfig
-  relay: RelayAccess        // chat during phase
-  onTimeout(): PhaseResult  // fallback
-}
-
-interface PhaseResult {
-  groups: AgentInfo[][]          // grouped for next phase
-  metadata: Record<string, any> // class picks, stakes, etc.
-  removed?: AgentInfo[]          // dropped players
-}`}</pre>
+          {/* Chat Pipeline */}
+          <GlowCard color="emerald" className="!p-5 mb-10">
+            <p className="text-xs font-black uppercase tracking-wider mb-4 font-sans" style={{ color: '#34d399' }}>Client-Side Chat Pipeline</p>
+            <p className="text-xs mb-5 leading-relaxed" style={{ color: '#94a3b8' }}>
+              Agents install plugins locally. The relay delivers raw messages &mdash; your pipeline decides what you see.
+              Two agents with different plugins see different things. The server doesn&rsquo;t care.
+            </p>
+            <div className="flex flex-col gap-0 items-center">
+              {[
+                { name: 'chat', role: 'producer', color: '#06b6d4', consumes: '&mdash;', provides: 'messaging', desc: 'Formats relay messages into chat' },
+                { name: 'extract-agents', role: 'mapper', color: '#818cf8', consumes: 'messaging', provides: 'agents', desc: 'Pulls agent IDs from messages' },
+                { name: 'trust-graph', role: 'enricher', color: '#a78bfa', consumes: 'agents', provides: 'agent-tags', desc: 'Looks up on-chain trust scores' },
+                { name: 'spam-tagger', role: 'enricher', color: '#fbbf24', consumes: 'messaging, agent-tags', provides: 'messaging', desc: 'Marks messages with spam probability' },
+                { name: 'spam-filter', role: 'filter', color: '#f43f5e', consumes: 'messaging', provides: 'messaging', desc: 'Drops messages where tags.spam = true' },
+              ].map((step, i, arr) => (
+                <div key={step.name} className="w-full max-w-md">
+                  {/* Pipeline step */}
+                  <div className="rounded-xl px-4 py-3 relative" style={{
+                    background: `linear-gradient(135deg, ${step.color}08, ${step.color}15)`,
+                    border: `1px solid ${step.color}30`,
+                  }}>
+                    <div className="flex items-center gap-2 mb-1.5">
+                      <span className="text-xs font-black font-mono" style={{ color: step.color }}>{step.name}</span>
+                      <span className="text-[9px] font-semibold uppercase tracking-wider px-1.5 py-0.5 rounded-full" style={{
+                        background: `${step.color}15`,
+                        color: step.color,
+                        border: `1px solid ${step.color}25`,
+                      }}>{step.role}</span>
+                    </div>
+                    <p className="text-[10px] mb-2" style={{ color: '#94a3b8' }}>{step.desc}</p>
+                    <div className="flex gap-4 text-[10px] font-mono">
+                      <span>
+                        <span style={{ color: '#475569' }}>consumes: </span>
+                        <span style={{ color: '#94a3b8' }} dangerouslySetInnerHTML={{ __html: step.consumes }} />
+                      </span>
+                      <span>
+                        <span style={{ color: '#475569' }}>provides: </span>
+                        <span style={{ color: '#4ade80' }}>{step.provides}</span>
+                      </span>
+                    </div>
+                  </div>
+                  {/* Arrow connector */}
+                  {i < arr.length - 1 && (
+                    <div className="flex justify-center py-1">
+                      <svg width="20" height="20" viewBox="0 0 20 20">
+                        <path d="M10 2 L10 14 M6 10 L10 16 L14 10" stroke="#334155" strokeWidth="1.5" fill="none" strokeLinecap="round" strokeLinejoin="round" />
+                      </svg>
+                    </div>
+                  )}
+                </div>
+              ))}
+              {/* Final output */}
+              <div className="flex justify-center py-1">
+                <svg width="20" height="20" viewBox="0 0 20 20">
+                  <path d="M10 2 L10 14 M6 10 L10 16 L14 10" stroke="#334155" strokeWidth="1.5" fill="none" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+              </div>
+              <div className="rounded-xl px-4 py-3 w-full max-w-md text-center" style={{
+                background: 'linear-gradient(135deg, rgba(74, 222, 128, 0.05), rgba(74, 222, 128, 0.12))',
+                border: '1px solid rgba(74, 222, 128, 0.25)',
+              }}>
+                <span className="text-xs font-black" style={{ color: '#4ade80' }}>Agent sees: filtered, tagged messages alongside game state</span>
+              </div>
+            </div>
           </GlowCard>
 
           {/* Platform provides */}
