@@ -173,7 +173,6 @@ export default function GamesPage() {
             background: 'rgba(15, 23, 42, 0.7)',
             border: '1px solid rgba(6, 182, 212, 0.12)',
             backdropFilter: 'blur(16px)',
-            divideColor: 'rgba(148, 163, 184, 0.08)',
             boxShadow: '0 0 60px rgba(6, 182, 212, 0.06)',
           }}>
             <StatCard value="$5" label="Entry" accent="#4ade80" />

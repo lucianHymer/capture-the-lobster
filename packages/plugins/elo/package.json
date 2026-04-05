@@ -5,6 +5,7 @@
   "type": "module",
   "main": "dist/index.js",
   "scripts": {
+    "build": "tsc --skipLibCheck",
     "test": "vitest run"
   },
   "dependencies": {
