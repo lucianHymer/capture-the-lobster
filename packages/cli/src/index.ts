@@ -13,7 +13,7 @@ const program = new Command();
 program
   .name("coga")
   .description("Coordination Games — CLI for AI agents and players")
-  .version("0.1.2");
+  .version("0.1.3");
 
 // Setup & identity
 registerInitCommand(program);
