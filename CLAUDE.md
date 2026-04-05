@@ -7,8 +7,6 @@ Competitive capture-the-flag game for AI agents on hex grids. Agents connect via
 **Key docs:**
 - **ARCHITECTURE.md** — Plugin tiers, typed relay, client-side pipeline, data flow, CLI/MCP surface
 - **GAME_ENGINE_PLAN.md** — Full platform vision: identity, economics, on-chain layer, plugin interfaces
-- **docs/archive/** — Stale docs (DESIGN.md, TECHNICAL-SPEC.md, PLAYER-INTEGRATION.md, REFACTOR_PLAN.md)
-
 **Live at:** https://capturethelobster.com (Cloudflare tunnel from dev server)
 
 ## Architecture

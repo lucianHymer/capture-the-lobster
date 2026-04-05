@@ -1,7 +1,10 @@
 node_modules/
 dist/
 *.db
+*.db-shm
+*.db-wal
 *.sqlite
+*.tsbuildinfo
 .env
 .DS_Store
 packages/server/types-node-22.19.15.tgz
