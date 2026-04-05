@@ -139,11 +139,6 @@ export class GameClient {
     return this.api.post('/api/player/move', body);
   }
 
-  /** Send a chat message — convenience wrapper for callPluginTool('basic-chat', 'chat'). */
-  async chat(message: string): Promise<any> {
-    return this.callPluginTool('basic-chat', 'chat', { message });
-  }
-
   /** Call a plugin tool by plugin ID and tool name. Goes through the generic relay. */
   async callPluginTool(pluginId: string, toolName: string, args: unknown): Promise<any> {
     await this.ensureAuth();

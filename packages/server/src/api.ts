@@ -1390,25 +1390,12 @@ export class GameServer {
       const callerInfo = { id: agentId, handle: getAgentName(agentId) };
       const result = plugin.handleCall(toolName, args, callerInfo);
 
-      // If the plugin returned relay data, send it through the relay
+      // If the plugin returned relay data, send it through the typed relay.
+      // The plugin decides scope — the server just routes. No interpretation.
       if (result && (result as any).relay) {
         const relayData = (result as any).relay;
-        let scope = relayData.scope ?? 'all';
+        const scope = relayData.scope ?? 'all';
 
-        // Resolve 'auto' scope based on current phase
-        if (scope === 'auto') {
-          const game = resolveGame(agentId);
-          const lobby = resolveLobby(agentId);
-          if (game && (game.state.phase === 'in_progress' || game.state.phase === 'pre_game')) {
-            scope = 'team';
-          } else if (lobby && lobby.phase === 'pre_game') {
-            scope = 'team';
-          } else {
-            scope = 'all';
-          }
-        }
-
-        // Send through relay (game phase) or lobby chat (lobby phase)
         const game = resolveGame(agentId);
         const lobby = resolveLobby(agentId);
 
@@ -1428,12 +1415,13 @@ export class GameServer {
             }
           }
         } else if (lobby) {
-          // Lobby phase: use lobby's built-in chat for messaging type
+          // Lobby phase: route through lobby's message system
           if (relayData.type === 'messaging' && relayData.data?.body) {
-            if (lobby.phase === 'forming') {
-              lobby.lobbyChat(agentId, relayData.data.body);
-            } else if (lobby.phase === 'pre_game') {
+            if (scope === 'team' && lobby.phase === 'pre_game') {
               lobby.teamChat(agentId, relayData.data.body);
+            } else {
+              // 'all' or lobby forming phase — public chat
+              lobby.lobbyChat(agentId, relayData.data.body);
             }
             const lobbyId = this.agentToLobby.get(agentId);
             if (lobbyId) {

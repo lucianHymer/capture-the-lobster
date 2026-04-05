@@ -91,8 +91,9 @@ export const BasicChatPlugin: ToolPlugin = {
         type: 'object',
         properties: {
           message: { type: 'string', description: 'Your message' },
+          scope: { type: 'string', description: 'Who receives it: "team" (teammates only), "all" (everyone in game/lobby), or an agentId for a DM' },
         },
-        required: ['message'],
+        required: ['message', 'scope'],
       },
       mcpExpose: true,
     },
@@ -107,15 +108,14 @@ export const BasicChatPlugin: ToolPlugin = {
 
   handleCall(tool: string, args: unknown, caller: AgentInfo): unknown {
     if (tool === 'chat') {
-      const { message } = args as { message: string };
-      // Return relay data — the server sends it through the typed relay.
-      // Scope is phase-dependent: team during gameplay/pre-game, all during lobby.
+      const { message, scope } = args as { message: string; scope: string };
+      // Return relay data — the server sends it through the typed relay as-is.
+      // Agent chooses scope: 'team', 'all', or a specific agentId for DM.
       return {
         relay: {
           type: 'messaging',
           data: { body: message },
-          // 'auto' means the server resolves scope based on current phase
-          scope: 'auto',
+          scope: scope || 'team',
           pluginId: 'basic-chat',
         },
       };
