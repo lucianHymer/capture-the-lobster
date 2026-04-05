@@ -293,11 +293,18 @@ export interface AgentInfo {
   team?: string;
 }
 
-/** MCP tool definition exposed by a plugin. */
+/** Tool definition declared by a plugin. */
 export interface ToolDefinition {
   name: string;
   description: string;
   inputSchema: Record<string, any>;
+  /**
+   * If true, this tool is also exposed as an MCP tool (not just CLI).
+   * MCP tools are for mid-turn actions agents need in the flow.
+   * CLI-only tools are for between-game or setup actions.
+   * Default: false (CLI only via `coga tool <pluginId> <toolName>`).
+   */
+  mcpExpose?: boolean;
 }
 
 // ---------------------------------------------------------------------------

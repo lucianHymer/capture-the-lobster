@@ -145,6 +145,12 @@ export class GameClient {
     return this.api.post('/api/player/chat', { message });
   }
 
+  /** Call a plugin tool by plugin ID and tool name. */
+  async callPluginTool(pluginId: string, toolName: string, args: unknown): Promise<any> {
+    await this.ensureAuth();
+    return this.api.post('/api/player/tool', { pluginId, tool: toolName, args });
+  }
+
   // ---------------------------------------------------------------------------
   // Lobby operations
   // ---------------------------------------------------------------------------

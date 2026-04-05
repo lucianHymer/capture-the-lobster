@@ -16,6 +16,8 @@ import {
 import { GameClient } from '../../cli/src/game-client.js';
 import { createBotToken } from './mcp-http.js';
 import { createBotMcpServer } from './claude-bot.js';
+import { BasicChatPlugin } from '@coordination-games/plugin-chat';
+import type { ToolPlugin } from '@coordination-games/engine';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -346,7 +348,7 @@ export class LobbyRunner {
     const client = this.botClients.get(botId);
     if (!client) return;
 
-    const mcpServer = createBotMcpServer(client);
+    const mcpServer = createBotMcpServer(client, [BasicChatPlugin]);
     const serverName = 'game-server';
 
     const prompt = round === 1
@@ -447,7 +449,7 @@ export class LobbyRunner {
     const client = this.botClients.get(botId);
     if (!client) return;
 
-    const mcpServer = createBotMcpServer(client);
+    const mcpServer = createBotMcpServer(client, [BasicChatPlugin]);
     const serverName = 'game-server';
 
     const prompt = mode === 'discuss'

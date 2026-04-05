@@ -37,6 +37,7 @@ import {
   CaptureTheLobsterPlugin,
 } from './game-session.js';
 import { EloTracker } from '@coordination-games/plugin-elo';
+import { BasicChatPlugin } from '@coordination-games/plugin-chat';
 import { runAllBotsTurn, createBotSessions, BotSession } from './claude-bot.js';
 import { LobbyRunner, LobbyRunnerState } from './lobby-runner.js';
 import {
@@ -1212,12 +1213,9 @@ export class GameServer {
     });
 
     // ------------------------------------------------------------------
-    // 8. POST /chat — Send a message
+    // Chat handler — used by both /chat and /tool (basic-chat:chat)
     // ------------------------------------------------------------------
-    router.post('/chat', requirePlayerAuth, (req: any, res: any) => {
-      const agentId = req.agentId as string;
-      const { message } = req.body ?? {};
-      if (!message || typeof message !== 'string') return res.status(400).json({ error: 'message is required (string)' });
+    const handleChat = (agentId: string, message: string, res: any) => {
 
       // Lobby forming phase: public chat
       const lobby = resolveLobby(agentId);
@@ -1278,6 +1276,16 @@ export class GameServer {
       }
 
       return res.status(400).json({ error: 'No active lobby or game.' });
+    };
+
+    // ------------------------------------------------------------------
+    // 8. POST /chat — Send a message (delegates to handleChat)
+    // ------------------------------------------------------------------
+    router.post('/chat', requirePlayerAuth, (req: any, res: any) => {
+      const agentId = req.agentId as string;
+      const { message } = req.body ?? {};
+      if (!message || typeof message !== 'string') return res.status(400).json({ error: 'message is required (string)' });
+      return handleChat(agentId, message, res);
     });
 
     // ------------------------------------------------------------------
@@ -1423,6 +1431,27 @@ export class GameServer {
 
       const updates = buildUpdates(agentId, resolveGame, resolveLobby, resolveRelay);
       return res.json({ success: true, class: cls, ...updates });
+    });
+
+    // ------------------------------------------------------------------
+    // 15b. POST /tool — Call a plugin tool
+    // Routes to the appropriate handler based on pluginId + toolName.
+    // ------------------------------------------------------------------
+    router.post('/tool', requirePlayerAuth, (req: any, res: any) => {
+      const agentId = req.agentId as string;
+      const { pluginId, tool: toolName, args } = req.body ?? {};
+      if (!pluginId || !toolName) {
+        return res.status(400).json({ error: 'pluginId and tool are required' });
+      }
+
+      if (pluginId === 'basic-chat' && toolName === 'chat') {
+        const message = (args as any)?.message;
+        if (!message || typeof message !== 'string') return res.status(400).json({ error: 'message is required' });
+        return handleChat(agentId, message, res);
+      }
+
+      // TODO: generalize with a plugin registry for additional plugins
+      return res.status(404).json({ error: `Plugin "${pluginId}" tool "${toolName}" not found` });
     });
 
     // ------------------------------------------------------------------
@@ -1633,6 +1662,7 @@ export class GameServer {
         players.map(p => ({ id: p.id, handle: handleMap[p.id] ?? p.id, team: p.team })),
         this.serverUrl,
         (id, handle) => createBotToken(id, handle),
+        [BasicChatPlugin],
       ),
       finished: false,
       turnInProgress: false,
@@ -1999,6 +2029,7 @@ export class GameServer {
         })),
         this.serverUrl,
         (id, handle) => createBotToken(id, handle),
+        [BasicChatPlugin],
       ),
       finished: false,
       turnInProgress: false,

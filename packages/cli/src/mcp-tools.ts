@@ -11,10 +11,13 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { GameClient } from "./game-client.js";
+import type { ToolPlugin } from "@coordination-games/engine";
 
 export interface RegisterToolsOptions {
   /** When true, indicates this is a bot session (for future bot-specific behavior). */
   botMode?: boolean;
+  /** Active plugins — their mcpExpose tools get registered as MCP tools. */
+  plugins?: ToolPlugin[];
 }
 
 /**
@@ -104,22 +107,56 @@ export function registerGameTools(
   );
 
   // ---------------------------------------------------------------------------
-  // Chat
+  // Plugin tools (mcpExpose: true)
+  // Plugins declare tools via ToolPlugin.tools[]. Those with mcpExpose: true
+  // are registered here as MCP tools. The handler calls the plugin's
+  // handleCall() via the GameClient's plugin tool endpoint.
   // ---------------------------------------------------------------------------
 
-  server.tool(
-    'chat',
-    'Send a message (lobby: public, pre-game/game: team-only)',
-    { message: z.string().describe('The message to send') },
-    async ({ message }) => {
-      try {
-        const result = await client.chat(message);
-        return jsonResult(result);
-      } catch (err: any) {
-        return jsonError(err);
+  if (options?.plugins) {
+    const mcpToolNames = new Set<string>();
+    for (const plugin of options.plugins) {
+      for (const toolDef of plugin.tools ?? []) {
+        if (!toolDef.mcpExpose) continue;
+        if (mcpToolNames.has(toolDef.name)) {
+          throw new Error(`MCP tool name collision: "${toolDef.name}" is exposed by multiple plugins. Rename one.`);
+        }
+        mcpToolNames.add(toolDef.name);
+
+        // Convert inputSchema to zod-compatible shape for McpServer
+        // McpServer.tool() accepts raw JSON schema objects
+        const schema: Record<string, any> = {};
+        const props = toolDef.inputSchema?.properties ?? {};
+        for (const [key, prop] of Object.entries(props) as [string, any][]) {
+          if (prop.type === 'string') {
+            schema[key] = z.string().describe(prop.description ?? '');
+          } else if (prop.type === 'number') {
+            schema[key] = z.number().describe(prop.description ?? '');
+          } else if (prop.type === 'array') {
+            schema[key] = z.array(z.string()).describe(prop.description ?? '');
+          } else {
+            schema[key] = z.string().describe(prop.description ?? '');
+          }
+        }
+
+        const pluginId = plugin.id;
+        const toolName = toolDef.name;
+        server.tool(
+          toolName,
+          toolDef.description,
+          schema,
+          async (args) => {
+            try {
+              const result = await client.callPluginTool(pluginId, toolName, args);
+              return jsonResult(result);
+            } catch (err: any) {
+              return jsonError(err);
+            }
+          },
+        );
       }
-    },
-  );
+    }
+  }
 
   // ---------------------------------------------------------------------------
   // Lobby

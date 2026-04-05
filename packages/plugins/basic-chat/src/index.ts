@@ -11,7 +11,7 @@
  * The server just relays the typed data by scope.
  */
 
-import type { ToolPlugin, Message } from '@coordination-games/engine';
+import type { ToolPlugin, Message, AgentInfo } from '@coordination-games/engine';
 
 /** A relay message as received from the server. */
 export interface RelayMessage {
@@ -78,14 +78,39 @@ export function extractMessages(relayMessages: RelayMessage[]): Message[] {
  */
 export const BasicChatPlugin: ToolPlugin = {
   id: 'basic-chat',
-  version: '0.2.0',
+  version: '0.3.0',
   modes: [{ name: 'messaging', consumes: [], provides: ['messaging'] }],
   purity: 'pure',
+
+  /** MCP tool: send a chat message */
+  tools: [
+    {
+      name: 'chat',
+      description: 'Send a message. In the lobby, visible to everyone. During class selection and in-game, visible to your team only.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          message: { type: 'string', description: 'Your message' },
+        },
+        required: ['message'],
+      },
+      mcpExpose: true,
+    },
+  ],
 
   handleData(mode: string, inputs: Map<string, any>): Map<string, any> {
     // Read raw relay messages from pipeline input
     const relayMessages: RelayMessage[] = inputs.get('relay-messages') ?? [];
     const messages = extractMessages(relayMessages);
     return new Map([['messaging', messages]]);
+  },
+
+  handleCall(tool: string, args: unknown, caller: AgentInfo): unknown {
+    if (tool === 'chat') {
+      const { message } = args as { message: string };
+      // Return the formatted relay message — the caller (GameClient/CLI) sends it
+      return { message };
+    }
+    return { error: `Unknown tool: ${tool}` };
   },
 };

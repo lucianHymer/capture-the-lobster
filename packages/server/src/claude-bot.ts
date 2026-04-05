@@ -13,6 +13,7 @@ import {
 } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
 import { GameClient } from '../../cli/src/game-client.js';
+import type { ToolPlugin } from '@coordination-games/engine';
 
 // ---------------------------------------------------------------------------
 // System prompt
@@ -36,84 +37,61 @@ Be decisive and aggressive. You have limited time per turn. Always submit an act
 // Create in-process MCP server backed by GameClient
 // ---------------------------------------------------------------------------
 
-export function createBotMcpServer(client: GameClient) {
+export function createBotMcpServer(client: GameClient, plugins: ToolPlugin[] = []) {
+  // Core platform tools (always available)
+  const coreTools = [
+    tool('get_guide', 'Game rules, available tools, and your current status. Call this FIRST.', {},
+      async () => jsonResult(await client.getGuide())),
+    tool('get_state', 'Get current game/lobby state (fog-filtered).', {},
+      async () => jsonResult(await client.getState())),
+    tool('wait_for_update', 'YOUR MAIN LOOP — blocks until next event.', {},
+      async () => jsonResult(await client.waitForUpdate())),
+    tool('submit_move', 'Submit your move: direction array.', { path: z.array(z.string()).describe('e.g. ["N","NE"]') },
+      async ({ path }) => jsonResult(await client.submitMove(path ?? []))),
+    tool('list_lobbies', 'List available lobbies.', {},
+      async () => jsonResult(await client.listLobbies())),
+    tool('join_lobby', 'Join a lobby by ID.', { lobbyId: z.string() },
+      async ({ lobbyId }) => jsonResult(await client.joinLobby(lobbyId))),
+    tool('create_lobby', 'Create a new lobby.', { teamSize: z.number().min(2).max(6).optional() },
+      async ({ teamSize }) => jsonResult(await client.createLobby(teamSize))),
+    tool('propose_team', 'Invite another agent to your team.', { agentId: z.string() },
+      async ({ agentId }) => jsonResult(await client.proposeTeam(agentId))),
+    tool('accept_team', 'Accept a team invitation.', { teamId: z.string() },
+      async ({ teamId }) => jsonResult(await client.acceptTeam(teamId))),
+    tool('leave_team', 'Leave your current team.', {},
+      async () => jsonResult(await client.leaveTeam())),
+    tool('choose_class', 'Pick your unit class.', { class: z.enum(['rogue', 'knight', 'mage']) },
+      async (args) => jsonResult(await client.chooseClass(args['class']))),
+  ];
+
+  // Plugin tools (mcpExpose: true only)
+  const pluginTools = [];
+  const mcpNames = new Set(coreTools.map((t: any) => t.name));
+  for (const plugin of plugins) {
+    for (const toolDef of plugin.tools ?? []) {
+      if (!toolDef.mcpExpose) continue;
+      if (mcpNames.has(toolDef.name)) {
+        throw new Error(`MCP tool name collision: "${toolDef.name}" exposed by plugin "${plugin.id}" conflicts with existing tool.`);
+      }
+      mcpNames.add(toolDef.name);
+      const pluginId = plugin.id;
+      const toolName = toolDef.name;
+      // Build zod schema from inputSchema
+      const schema: Record<string, any> = {};
+      for (const [key, prop] of Object.entries(toolDef.inputSchema?.properties ?? {}) as [string, any][]) {
+        schema[key] = prop.type === 'number' ? z.number().describe(prop.description ?? '') : z.string().describe(prop.description ?? '');
+      }
+      pluginTools.push(
+        tool(toolName, toolDef.description, schema,
+          async (args) => jsonResult(await client.callPluginTool(pluginId, toolName, args))),
+      );
+    }
+  }
+
   return createSdkMcpServer({
     name: 'game-server',
     version: '0.1.0',
-    tools: [
-      tool(
-        'get_guide',
-        'Game rules, available tools, and your current status. Call this FIRST.',
-        {},
-        async () => jsonResult(await client.getGuide()),
-      ),
-      tool(
-        'get_state',
-        'Get current game/lobby state (fog-filtered). For bootstrap/recovery only — wait_for_update is your main loop.',
-        {},
-        async () => jsonResult(await client.getState()),
-      ),
-      tool(
-        'wait_for_update',
-        'YOUR MAIN LOOP — blocks until next event (turn change, chat). Returns full state on turn changes.',
-        {},
-        async () => jsonResult(await client.waitForUpdate()),
-      ),
-      tool(
-        'submit_move',
-        'Submit your move: array of directions (N/NE/SE/S/SW/NW). Empty array to stay put.',
-        { path: z.array(z.string()).describe('Direction array, e.g. ["N","NE"]') },
-        async ({ path }) => jsonResult(await client.submitMove(path ?? [])),
-      ),
-      tool(
-        'chat',
-        'Send a message to your team. Share what you see, your plan, enemy positions.',
-        { message: z.string().describe('Your message') },
-        async ({ message }) => jsonResult(await client.chat(message)),
-      ),
-      tool(
-        'list_lobbies',
-        'List available lobbies.',
-        {},
-        async () => jsonResult(await client.listLobbies()),
-      ),
-      tool(
-        'join_lobby',
-        'Join a lobby by ID.',
-        { lobbyId: z.string() },
-        async ({ lobbyId }) => jsonResult(await client.joinLobby(lobbyId)),
-      ),
-      tool(
-        'create_lobby',
-        'Create a new lobby.',
-        { teamSize: z.number().min(2).max(6).optional() },
-        async ({ teamSize }) => jsonResult(await client.createLobby(teamSize)),
-      ),
-      tool(
-        'propose_team',
-        'Invite another agent to your team.',
-        { agentId: z.string() },
-        async ({ agentId }) => jsonResult(await client.proposeTeam(agentId)),
-      ),
-      tool(
-        'accept_team',
-        'Accept a team invitation.',
-        { teamId: z.string() },
-        async ({ teamId }) => jsonResult(await client.acceptTeam(teamId)),
-      ),
-      tool(
-        'leave_team',
-        'Leave your current team.',
-        {},
-        async () => jsonResult(await client.leaveTeam()),
-      ),
-      tool(
-        'choose_class',
-        'Pick your unit class: rogue (speed 3), knight (speed 2), or mage (range 2).',
-        { class: z.enum(['rogue', 'knight', 'mage']) },
-        async (args) => jsonResult(await client.chooseClass(args['class'])),
-      ),
-    ],
+    tools: [...coreTools, ...pluginTools],
   });
 }
 
@@ -130,6 +108,7 @@ export interface BotSession {
   handle: string;
   team: 'A' | 'B';
   client: GameClient;
+  plugins: ToolPlugin[];
   sessionId: string | null;
   guideLoaded: boolean;
 }
@@ -142,7 +121,7 @@ export async function runClaudeBotTurn(
   bot: BotSession,
   turn: number,
 ): Promise<void> {
-  const mcpServer = createBotMcpServer(bot.client);
+  const mcpServer = createBotMcpServer(bot.client, bot.plugins);
   const serverName = 'game-server';
 
   const prompt = turn === 1
@@ -199,12 +178,14 @@ export function createBotSessions(
   bots: { id: string; handle: string; team: 'A' | 'B' }[],
   serverUrl: string,
   getToken: (id: string, handle: string) => string,
+  plugins: ToolPlugin[] = [],
 ): BotSession[] {
   return bots.map((b) => ({
     id: b.id,
     handle: b.handle,
     team: b.team,
     client: new GameClient(serverUrl, { token: getToken(b.id, b.handle) }),
+    plugins,
     sessionId: null,
     guideLoaded: false,
   }));

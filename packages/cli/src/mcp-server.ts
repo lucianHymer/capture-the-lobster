@@ -16,6 +16,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { GameClient } from "./game-client.js";
 import { registerGameTools } from "./mcp-tools.js";
 import { loadConfig } from "./config.js";
+import { BasicChatPlugin } from "@coordination-games/plugin-chat";
 
 export interface ServeOptions {
   serverUrl: string;
@@ -35,7 +36,7 @@ function createMcpServerWithClient(options?: ServeOptions): { server: McpServer;
     name: "coordination-games",
     version: "0.1.0",
   });
-  registerGameTools(server, client, { botMode: options?.botMode });
+  registerGameTools(server, client, { botMode: options?.botMode, plugins: [BasicChatPlugin] });
   return { server, client };
 }
 
