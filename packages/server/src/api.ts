@@ -46,6 +46,20 @@ import {
   notifyAgent,
   getAgentName,
   createBotToken,
+  getAgentIdFromToken,
+  tokenRegistry,
+  handleRegistry,
+  TOKEN_TTL_MS,
+  waitForNextTurn,
+  waitForAgentUpdate,
+  buildUpdates,
+  hasPendingUpdates,
+  setAgentLastTurn,
+  hasAgentMissedTurn,
+  GAME_RULES,
+  type GameResolver,
+  type LobbyResolver,
+  type RelayResolver,
 } from './mcp-http.js';
 import { createRelayRouter } from './relay.js';
 import { GameRelay, type RelayMessage } from './typed-relay.js';
@@ -913,6 +927,9 @@ export class GameServer {
 
     this.app.use('/api', router);
 
+    // Mount player-facing REST endpoints (replaces MCP tools)
+    this.mountPlayerRoutes();
+
     // Mount on-chain relay routes (only if env vars configured)
     const relayRouter = createRelayRouter();
     if (relayRouter) {
@@ -927,6 +944,623 @@ export class GameServer {
       if (_req.path === '/mcp') return res.status(404).send('Not found');
       res.sendFile(indexPath);
     });
+  }
+
+  // ---------------------------------------------------------------------------
+  // Player-facing REST API (replaces MCP tools for agents/CLI)
+  // ---------------------------------------------------------------------------
+
+  private mountPlayerRoutes(): void {
+    const router = express.Router();
+
+    // Resolver helpers (same logic as MCP callbacks)
+    const resolveGame: GameResolver = (agentId: string) => {
+      const gameId = this.agentToGame.get(agentId);
+      if (!gameId) return null;
+      const room = this.games.get(gameId);
+      return room?.game ?? null;
+    };
+
+    const resolveLobby: LobbyResolver = (agentId: string) => {
+      const lobbyId = this.agentToLobby.get(agentId);
+      if (!lobbyId) return null;
+      const lobbyRoom = this.lobbies.get(lobbyId);
+      return lobbyRoom?.lobbyManager ?? null;
+    };
+
+    const resolveRelay: RelayResolver = (agentId: string) => {
+      const gameId = this.agentToGame.get(agentId);
+      if (!gameId) return null;
+      const room = this.games.get(gameId);
+      return room?.relay ?? null;
+    };
+
+    const VALID_DIRECTIONS: Direction[] = ['N', 'NE', 'SE', 'S', 'SW', 'NW'];
+
+    // Auth middleware: validates Bearer token, attaches agentId to req
+    const requirePlayerAuth = (req: any, res: any, next: any) => {
+      const authHeader = req.headers['authorization'] as string | undefined;
+      if (!authHeader?.startsWith('Bearer ')) {
+        return res.status(401).json({ error: 'auth_required', message: 'Missing Authorization: Bearer <token> header. Call POST /api/player/signin to get a token.' });
+      }
+      const token = authHeader.slice(7);
+      const agentId = getAgentIdFromToken(token);
+      if (!agentId) {
+        return res.status(401).json({ error: 'auth_required', message: 'Invalid or expired token. Call POST /api/player/signin to get a new token.' });
+      }
+      req.agentId = agentId;
+      req.agentName = getAgentName(agentId);
+      next();
+    };
+
+    // ------------------------------------------------------------------
+    // 1. POST /auth/challenge — Issue a challenge nonce for wallet auth
+    // ------------------------------------------------------------------
+    router.post('/auth/challenge', (_req, res) => {
+      const nonce = crypto.randomBytes(16).toString('hex');
+      res.json({ nonce, expiresIn: 300 });
+    });
+
+    // ------------------------------------------------------------------
+    // 2. POST /auth/verify — Verify a signed challenge (stub for now)
+    // ------------------------------------------------------------------
+    router.post('/auth/verify', (req, res) => {
+      const { nonce, signature, address, name } = req.body ?? {};
+      if (!name) return res.status(400).json({ error: 'name is required' });
+      // TODO: Wire real ERC-8004 signature verification
+      // For now, issue a simple token (same as signin)
+      const agentId = `ext_${crypto.randomBytes(4).toString('hex')}`;
+      const token = crypto.randomBytes(5).toString('hex');
+      const expiresAt = Date.now() + TOKEN_TTL_MS;
+      tokenRegistry.set(token, { agentId, name, expiresAt });
+      handleRegistry.set(name, agentId);
+      console.log(`[REST] Auth verified for "${name}" (agentId: ${agentId})`);
+      res.json({ token, agentId, name, expiresAt: new Date(expiresAt).toISOString() });
+    });
+
+    // ------------------------------------------------------------------
+    // 3. POST /signin — Simple signin (display name only, for dev mode)
+    // ------------------------------------------------------------------
+    router.post('/signin', (req, res) => {
+      const { name } = req.body ?? {};
+      if (!name || typeof name !== 'string') return res.status(400).json({ error: 'name is required (string)' });
+      const trimmed = name.trim();
+      if (!trimmed) return res.status(400).json({ error: 'name cannot be empty' });
+      if (trimmed.length > 32) return res.status(400).json({ error: 'name must be 32 characters or fewer' });
+
+      // If this name was used before, reuse the same agentId (enables reconnection)
+      const existingAgentId = handleRegistry.get(trimmed);
+      const agentId = existingAgentId ?? `ext_${crypto.randomBytes(4).toString('hex')}`;
+
+      if (!existingAgentId) {
+        handleRegistry.set(trimmed, agentId);
+      }
+
+      const token = crypto.randomBytes(5).toString('hex');
+      const expiresAt = Date.now() + TOKEN_TTL_MS;
+      tokenRegistry.set(token, { agentId, name: trimmed, expiresAt });
+
+      console.log(`[REST] Agent ${agentId} signed in as "${trimmed}"${existingAgentId ? ' (reconnected)' : ''}`);
+
+      res.json({
+        token,
+        agentId,
+        name: trimmed,
+        expiresAt: new Date(expiresAt).toISOString(),
+        reconnected: !!existingAgentId,
+      });
+    });
+
+    // ------------------------------------------------------------------
+    // 4. GET /guide — Dynamic playbook
+    // ------------------------------------------------------------------
+    router.get('/guide', requirePlayerAuth, (req: any, res: any) => {
+      const agentId = req.agentId as string;
+
+      let playerState = '';
+      const game = resolveGame(agentId);
+      const lobby = resolveLobby(agentId);
+
+      if (game) {
+        playerState = `\n## Your Status\n- **Phase:** ${game.state.phase}\n- **Turn:** ${game.state.turn}\n`;
+        const unit = game.state.units.find((u: any) => u.id === agentId);
+        if (unit) {
+          playerState += `- **Team:** ${unit.team}\n- **Class:** ${unit.unitClass}\n- **Alive:** ${unit.alive}\n`;
+        }
+      } else if (lobby) {
+        playerState += `\n## Your Status\n- **Phase:** ${lobby.phase}\n- **Lobby:** active\n`;
+      } else {
+        playerState += `\n## Your Status\n- Not in a game or lobby. Use signin then join_lobby or create_lobby.\n`;
+      }
+
+      const phase = game?.state.phase ?? lobby?.phase ?? 'none';
+      let availableTools = '\n## Available Endpoints\n';
+      availableTools += '- `GET /guide` -- this playbook\n';
+      availableTools += '- `POST /signin` -- authenticate\n';
+
+      if (!game && !lobby) {
+        availableTools += '- `POST /lobby/join` / `POST /lobby/create` -- find a game\n';
+      } else if (lobby && lobby.phase === 'forming') {
+        availableTools += '- `POST /team/propose` / `POST /team/accept` / `POST /team/leave` -- form teams\n';
+        availableTools += '- `POST /chat` -- talk to everyone in the lobby\n';
+        availableTools += '- `GET /wait` -- wait for changes\n';
+      } else if (lobby && lobby.phase === 'pre_game') {
+        availableTools += '- `POST /class` -- pick your class\n';
+        availableTools += '- `POST /chat` -- team chat\n';
+        availableTools += '- `GET /wait` -- wait for changes\n';
+      } else if (game && game.state.phase === 'in_progress') {
+        availableTools += '- `GET /wait` -- YOUR MAIN LOOP\n';
+        availableTools += '- `POST /move` -- submit a move\n';
+        availableTools += '- `POST /chat` -- team-only chat\n';
+        availableTools += '- `GET /state` -- bootstrap/recovery only\n';
+      }
+
+      const pluginInfo = `\n## Required Plugins\n` +
+        `This game requires: **${(CaptureTheLobsterPlugin.requiredPlugins ?? []).join(', ') || 'none'}**\n` +
+        `Recommended: **${(CaptureTheLobsterPlugin.recommendedPlugins ?? []).join(', ') || 'none'}**\n`;
+
+      res.json({ guide: GAME_RULES + pluginInfo + playerState + availableTools });
+    });
+
+    // ------------------------------------------------------------------
+    // 5. GET /state — Get current state (fog-filtered)
+    // ------------------------------------------------------------------
+    router.get('/state', requirePlayerAuth, (req: any, res: any) => {
+      const agentId = req.agentId as string;
+
+      const game = resolveGame(agentId);
+      if (game) {
+        const state = getStateForAgent(game, agentId);
+        const relay = resolveRelay(agentId);
+        const relayMessages = relay?.receive(agentId) ?? [];
+        if (game.state.phase === 'finished') {
+          return res.json({ phase: 'finished', gameOver: true, winner: game.state.winner, ...state, relayMessages });
+        }
+        return res.json({ phase: 'game', ...state, relayMessages });
+      }
+
+      const lobby = resolveLobby(agentId);
+      if (lobby) {
+        if (lobby.phase === 'forming') {
+          return res.json({ phase: 'forming', ...lobby.getLobbyState(agentId) });
+        }
+        if (lobby.phase === 'pre_game') {
+          const teamState = lobby.getTeamState(agentId);
+          return res.json({ phase: 'pre_game', ...teamState });
+        }
+        return res.json({ phase: lobby.phase });
+      }
+
+      return res.status(404).json({ error: 'No active lobby or game. Join a lobby first.' });
+    });
+
+    // ------------------------------------------------------------------
+    // 6. GET /wait — Long-polling wait for updates
+    // ------------------------------------------------------------------
+    router.get('/wait', requirePlayerAuth, async (req: any, res: any) => {
+      const agentId = req.agentId as string;
+
+      const game = resolveGame(agentId);
+      const lobby = resolveLobby(agentId);
+
+      // === Game phase ===
+      if (game) {
+        if (game.state.phase === 'finished') {
+          const state = getStateForAgent(game, agentId);
+          return res.json({ reason: 'game_over', gameOver: true, winner: game.state.winner, ...state });
+        }
+
+        // If the turn advanced since agent last got full state, return full state
+        if (hasAgentMissedTurn(agentId, game.state.turn)) {
+          const state = getStateForAgent(game, agentId);
+          setAgentLastTurn(agentId, game.state.turn);
+          buildUpdates(agentId, resolveGame, resolveLobby, resolveRelay);
+          return res.json({ reason: 'turn_changed', moveSubmitted: game.hasSubmitted(agentId), ...state });
+        }
+
+        // Pending updates? Return immediately
+        if (hasPendingUpdates(agentId, resolveGame, resolveLobby, resolveRelay)) {
+          const updates = buildUpdates(agentId, resolveGame, resolveLobby, resolveRelay);
+          return res.json({ reason: 'update', ...updates });
+        }
+
+        // No move yet: return full state
+        if (!game.hasSubmitted(agentId)) {
+          const state = getStateForAgent(game, agentId);
+          setAgentLastTurn(agentId, game.state.turn);
+          return res.json({ reason: 'new_turn', moveSubmitted: false, ...state });
+        }
+
+        // Move submitted — block until turn resolution, chat, or timeout
+        const prevTurn = game.state.turn;
+        await Promise.race([
+          waitForNextTurn(game.gameId, 25000),
+          waitForAgentUpdate(agentId, 25000),
+        ]);
+
+        const updatedGame = resolveGame(agentId);
+        if (!updatedGame) return res.json({ reason: 'game_ended' });
+
+        if (updatedGame.state.phase === 'finished') {
+          const state = getStateForAgent(updatedGame, agentId);
+          return res.json({ reason: 'game_over', gameOver: true, winner: updatedGame.state.winner, ...state });
+        }
+
+        if (updatedGame.state.turn > prevTurn) {
+          const state = getStateForAgent(updatedGame, agentId);
+          setAgentLastTurn(agentId, updatedGame.state.turn);
+          return res.json({ reason: 'turn_changed', ...state });
+        }
+
+        const updates = buildUpdates(agentId, resolveGame, resolveLobby, resolveRelay);
+        return res.json({ reason: 'update', ...updates });
+      }
+
+      // === Lobby phase ===
+      if (lobby) {
+        if (hasPendingUpdates(agentId, resolveGame, resolveLobby, resolveRelay)) {
+          const updates = buildUpdates(agentId, resolveGame, resolveLobby, resolveRelay);
+          return res.json({ reason: 'update', ...updates });
+        }
+
+        const prevPhase = lobby.phase;
+        await waitForAgentUpdate(agentId, 25000);
+
+        // After waking, check if game started
+        const newGame = resolveGame(agentId);
+        if (newGame) {
+          const state = getStateForAgent(newGame, agentId);
+          return res.json({ reason: 'game_started', phase: 'game', ...state });
+        }
+
+        const updatedLobby = resolveLobby(agentId);
+        if (!updatedLobby) return res.json({ reason: 'lobby_ended' });
+
+        if (updatedLobby.phase !== prevPhase) {
+          if (updatedLobby.phase === 'forming') {
+            return res.json({ reason: 'phase_changed', phase: 'forming', ...updatedLobby.getLobbyState(agentId) });
+          }
+          if (updatedLobby.phase === 'pre_game') {
+            const teamState = updatedLobby.getTeamState(agentId);
+            return res.json({ reason: 'phase_changed', phase: 'pre_game', ...teamState });
+          }
+          return res.json({ reason: 'phase_changed', phase: updatedLobby.phase });
+        }
+
+        const updates = buildUpdates(agentId, resolveGame, resolveLobby, resolveRelay);
+        return res.json({ reason: 'update', ...updates });
+      }
+
+      return res.status(404).json({ error: 'No active lobby or game. Join a lobby first.' });
+    });
+
+    // ------------------------------------------------------------------
+    // 7. POST /move — Submit a move
+    // ------------------------------------------------------------------
+    router.post('/move', requirePlayerAuth, (req: any, res: any) => {
+      const agentId = req.agentId as string;
+      const { path, action, target, class: unitClass } = req.body ?? {};
+
+      // Lobby phase actions via generic move
+      if (action) {
+        const lobby = resolveLobby(agentId);
+        if (!lobby) return res.status(400).json({ error: 'No lobby available for this action.' });
+
+        switch (action) {
+          case 'propose-team': {
+            if (!target) return res.status(400).json({ error: 'propose-team requires "target" (agentId).' });
+            if (lobby.phase !== 'forming') return res.status(400).json({ error: 'Team proposals only during forming phase.' });
+            const result = lobby.proposeTeam(agentId, target);
+            if (!result.success) return res.status(400).json({ error: result.error ?? 'Failed.' });
+            const updates = buildUpdates(agentId, resolveGame, resolveLobby, resolveRelay);
+            return res.json({ success: true, teamId: result.teamId, ...updates });
+          }
+          case 'accept-team': {
+            if (!target) return res.status(400).json({ error: 'accept-team requires "target" (teamId).' });
+            if (lobby.phase !== 'forming') return res.status(400).json({ error: 'Team acceptance only during forming phase.' });
+            const result = lobby.acceptTeam(agentId, target);
+            if (!result.success) return res.status(400).json({ error: result.error ?? 'Failed.' });
+            const updates = buildUpdates(agentId, resolveGame, resolveLobby, resolveRelay);
+            return res.json({ success: true, ...updates });
+          }
+          case 'leave-team': {
+            if (lobby.phase !== 'forming') return res.status(400).json({ error: 'Can only leave teams during forming phase.' });
+            const result = lobby.leaveTeam(agentId);
+            if (!result.success) return res.status(400).json({ error: result.error ?? 'Failed.' });
+            const updates = buildUpdates(agentId, resolveGame, resolveLobby, resolveRelay);
+            return res.json({ success: true, ...updates });
+          }
+          case 'choose-class': {
+            const cls = unitClass ?? target;
+            if (!cls || !['rogue', 'knight', 'mage'].includes(cls)) {
+              return res.status(400).json({ error: 'choose-class requires "class" (rogue, knight, or mage).' });
+            }
+            if (lobby.phase !== 'pre_game') return res.status(400).json({ error: 'Class selection only during pre-game phase.' });
+            const result = lobby.chooseClass(agentId, cls as UnitClass);
+            if (!result.success) return res.status(400).json({ error: result.error ?? 'Failed.' });
+            const updates = buildUpdates(agentId, resolveGame, resolveLobby, resolveRelay);
+            return res.json({ success: true, class: cls, ...updates });
+          }
+          default:
+            return res.status(400).json({ error: `Unknown action "${action}". Valid: propose-team, accept-team, leave-team, choose-class` });
+        }
+      }
+
+      // Gameplay move (direction path)
+      const game = resolveGame(agentId);
+      if (!game) return res.status(400).json({ error: 'No game in progress.' });
+      if (game.state.phase !== 'in_progress') return res.status(400).json({ error: `Cannot submit moves -- game phase is: ${game.state.phase}` });
+
+      const movePath = path ?? [];
+      if (!Array.isArray(movePath)) return res.status(400).json({ error: 'path must be an array of direction strings' });
+      for (const dir of movePath) {
+        if (!VALID_DIRECTIONS.includes(dir as Direction)) {
+          return res.status(400).json({ error: `Invalid direction "${dir}". Valid: ${VALID_DIRECTIONS.join(', ')}` });
+        }
+      }
+
+      const directions = movePath as Direction[];
+      const result = submitCtlMove(game, agentId, directions);
+      if (!result.success) return res.status(400).json({ error: result.error ?? 'Failed to submit move.' });
+      this.onMoveSubmitted(game.gameId, agentId);
+      const updates = buildUpdates(agentId, resolveGame, resolveLobby, resolveRelay);
+      return res.json({ success: true, path: directions, ...updates });
+    });
+
+    // ------------------------------------------------------------------
+    // 8. POST /chat — Send a message
+    // ------------------------------------------------------------------
+    router.post('/chat', requirePlayerAuth, (req: any, res: any) => {
+      const agentId = req.agentId as string;
+      const { message } = req.body ?? {};
+      if (!message || typeof message !== 'string') return res.status(400).json({ error: 'message is required (string)' });
+
+      // Lobby forming phase: public chat
+      const lobby = resolveLobby(agentId);
+      if (lobby && lobby.phase === 'forming') {
+        lobby.lobbyChat(agentId, message);
+        // Broadcast + notify
+        const lobbyId = this.agentToLobby.get(agentId);
+        if (lobbyId) {
+          const lobbyRoom = this.lobbies.get(lobbyId);
+          if (lobbyRoom) {
+            lobbyRoom.runner.emitState();
+            for (const [id] of lobby.agents) {
+              if (id !== agentId) notifyAgent(id);
+            }
+          }
+        }
+        const updates = buildUpdates(agentId, resolveGame, resolveLobby, resolveRelay);
+        return res.json({ success: true, ...updates });
+      }
+
+      // Pre-game phase: team chat
+      if (lobby && lobby.phase === 'pre_game') {
+        lobby.teamChat(agentId, message);
+        const lobbyId = this.agentToLobby.get(agentId);
+        if (lobbyId) {
+          const lobbyRoom = this.lobbies.get(lobbyId);
+          if (lobbyRoom) {
+            lobbyRoom.runner.emitState();
+            for (const [id] of lobby.agents) {
+              if (id !== agentId) notifyAgent(id);
+            }
+          }
+        }
+        const updates = buildUpdates(agentId, resolveGame, resolveLobby, resolveRelay);
+        return res.json({ success: true, ...updates });
+      }
+
+      // Game phase: team chat via relay
+      const game = resolveGame(agentId);
+      if (game && game.state.phase === 'in_progress') {
+        const gameId = this.agentToGame.get(agentId)!;
+        const room = this.games.get(gameId);
+        if (room) {
+          const scope = 'team';
+          room.relay.send(agentId, game.state.turn, {
+            type: 'messaging',
+            data: { body: message },
+            scope,
+            pluginId: 'basic-chat',
+          });
+          this.broadcastState(room);
+          for (const unit of game.state.units) {
+            if (unit.id !== agentId) notifyAgent(unit.id);
+          }
+        }
+        const updates = buildUpdates(agentId, resolveGame, resolveLobby, resolveRelay);
+        return res.json({ success: true, ...updates });
+      }
+
+      return res.status(400).json({ error: 'No active lobby or game.' });
+    });
+
+    // ------------------------------------------------------------------
+    // 9. POST /lobby/join — Join a lobby
+    // ------------------------------------------------------------------
+    router.post('/lobby/join', requirePlayerAuth, (req: any, res: any) => {
+      const agentId = req.agentId as string;
+      const agentName = req.agentName as string;
+      const { lobbyId } = req.body ?? {};
+      if (!lobbyId) return res.status(400).json({ error: 'lobbyId is required' });
+
+      const lobbyRoom = this.lobbies.get(lobbyId);
+      if (!lobbyRoom) return res.status(404).json({ error: 'Lobby not found' });
+
+      // Track the slot
+      lobbyRoom.externalSlots.set(agentId, { token: '', agentId, connected: true });
+      this.agentToLobby.set(agentId, lobbyId);
+
+      // Add agent to the lobby manager
+      if (lobbyRoom.lobbyManager) {
+        lobbyRoom.lobbyManager.addAgent({ id: agentId, handle: agentName, elo: 1000 });
+      }
+
+      console.log(`[REST] Agent ${agentId} (${agentName}) joined lobby ${lobbyId}`);
+      lobbyRoom.runner.emitState();
+
+      // Notify other agents
+      if (lobbyRoom.lobbyManager) {
+        for (const [id] of lobbyRoom.lobbyManager.agents) {
+          if (id !== agentId) notifyAgent(id);
+        }
+      }
+
+      const updates = buildUpdates(agentId, resolveGame, resolveLobby, resolveRelay);
+      return res.json({ success: true, agentId, lobbyId, ...updates });
+    });
+
+    // ------------------------------------------------------------------
+    // 10. POST /lobby/create — Create a lobby
+    // ------------------------------------------------------------------
+    router.post('/lobby/create', requirePlayerAuth, (req: any, res: any) => {
+      const agentId = req.agentId as string;
+      const agentName = req.agentName as string;
+
+      if (this.activeGameCount() >= this.maxConcurrentGames) {
+        return res.status(429).json({ error: 'Server busy -- a lobby or game is already running.' });
+      }
+
+      const teamSize = Math.min(6, Math.max(2, Math.floor((req.body?.teamSize as number) || 2)));
+      const { lobbyId } = this.createLobbyGame(teamSize, 600000);
+      const lobbyRoom = this.lobbies.get(lobbyId)!;
+
+      // Auto-join the creator
+      lobbyRoom.externalSlots.set(agentId, { token: '', agentId, connected: true });
+      this.agentToLobby.set(agentId, lobbyId);
+      if (lobbyRoom.lobbyManager) {
+        lobbyRoom.lobbyManager.addAgent({ id: agentId, handle: agentName, elo: 1000 });
+      }
+      lobbyRoom.runner.emitState();
+
+      console.log(`[REST] Agent ${agentId} (${agentName}) created and joined lobby ${lobbyId} (${teamSize}v${teamSize})`);
+
+      const updates = buildUpdates(agentId, resolveGame, resolveLobby, resolveRelay);
+      return res.json({ success: true, lobbyId, teamSize, ...updates });
+    });
+
+    // ------------------------------------------------------------------
+    // 11. POST /team/propose — Propose team
+    // ------------------------------------------------------------------
+    router.post('/team/propose', requirePlayerAuth, (req: any, res: any) => {
+      const agentId = req.agentId as string;
+      const { agentId: targetAgentId } = req.body ?? {};
+      if (!targetAgentId) return res.status(400).json({ error: 'agentId (target) is required' });
+
+      const lobby = resolveLobby(agentId);
+      if (!lobby) return res.status(400).json({ error: 'No lobby available.' });
+      if (lobby.phase !== 'forming') return res.status(400).json({ error: 'Team proposals only during forming phase.' });
+
+      const result = lobby.proposeTeam(agentId, targetAgentId);
+      if (!result.success) return res.status(400).json({ error: result.error ?? 'Failed to propose team.' });
+
+      const updates = buildUpdates(agentId, resolveGame, resolveLobby, resolveRelay);
+      return res.json({
+        success: true,
+        teamId: result.teamId,
+        message: `Invited ${targetAgentId} to ${result.teamId}. They need to call accept_team.`,
+        ...updates,
+      });
+    });
+
+    // ------------------------------------------------------------------
+    // 12. POST /team/accept — Accept team invite
+    // ------------------------------------------------------------------
+    router.post('/team/accept', requirePlayerAuth, (req: any, res: any) => {
+      const agentId = req.agentId as string;
+      const { teamId } = req.body ?? {};
+      if (!teamId) return res.status(400).json({ error: 'teamId is required' });
+
+      const lobby = resolveLobby(agentId);
+      if (!lobby) return res.status(400).json({ error: 'No lobby available.' });
+      if (lobby.phase !== 'forming') return res.status(400).json({ error: 'Team acceptance only during forming phase.' });
+
+      const result = lobby.acceptTeam(agentId, teamId);
+      if (!result.success) return res.status(400).json({ error: result.error ?? 'Failed to accept team.' });
+
+      const updates = buildUpdates(agentId, resolveGame, resolveLobby, resolveRelay);
+      return res.json({ success: true, ...updates });
+    });
+
+    // ------------------------------------------------------------------
+    // 13. POST /team/leave — Leave team
+    // ------------------------------------------------------------------
+    router.post('/team/leave', requirePlayerAuth, (req: any, res: any) => {
+      const agentId = req.agentId as string;
+
+      const lobby = resolveLobby(agentId);
+      if (!lobby) return res.status(400).json({ error: 'No lobby available.' });
+      if (lobby.phase !== 'forming') return res.status(400).json({ error: 'Can only leave teams during forming phase.' });
+
+      const result = lobby.leaveTeam(agentId);
+      if (!result.success) return res.status(400).json({ error: result.error ?? 'Failed to leave team.' });
+
+      const updates = buildUpdates(agentId, resolveGame, resolveLobby, resolveRelay);
+      return res.json({ success: true, message: 'You left your team.', ...updates });
+    });
+
+    // ------------------------------------------------------------------
+    // 14. POST /class — Choose class
+    // ------------------------------------------------------------------
+    router.post('/class', requirePlayerAuth, (req: any, res: any) => {
+      const agentId = req.agentId as string;
+      const { class: cls } = req.body ?? {};
+      if (!cls || !['rogue', 'knight', 'mage'].includes(cls)) {
+        return res.status(400).json({ error: 'class is required: "rogue", "knight", or "mage"' });
+      }
+
+      const lobby = resolveLobby(agentId);
+      if (!lobby) return res.status(400).json({ error: 'No lobby available.' });
+      if (lobby.phase !== 'pre_game') return res.status(400).json({ error: 'Class selection only during pre-game phase.' });
+
+      const result = lobby.chooseClass(agentId, cls as UnitClass);
+      if (!result.success) return res.status(400).json({ error: result.error ?? 'Failed to choose class.' });
+
+      const updates = buildUpdates(agentId, resolveGame, resolveLobby, resolveRelay);
+      return res.json({ success: true, class: cls, ...updates });
+    });
+
+    // ------------------------------------------------------------------
+    // 15. GET /leaderboard — Leaderboard
+    // ------------------------------------------------------------------
+    router.get('/leaderboard', requirePlayerAuth, (req: any, res: any) => {
+      const limit = Math.min(Number(req.query.limit) || 20, 100);
+      const offset = Math.max(Number(req.query.offset) || 0, 0);
+      const players = this.elo.getLeaderboard(limit, offset);
+      res.json(players.map((p: any, i: number) => ({
+        rank: offset + i + 1,
+        handle: p.handle,
+        elo: p.elo,
+        gamesPlayed: p.gamesPlayed,
+        wins: p.wins,
+      })));
+    });
+
+    // ------------------------------------------------------------------
+    // 16. GET /stats — Player's own stats
+    // ------------------------------------------------------------------
+    router.get('/stats', requirePlayerAuth, (req: any, res: any) => {
+      const agentId = req.agentId as string;
+      const name = getAgentName(agentId);
+
+      const player = this.elo.getPlayerByHandle(name);
+      if (!player) return res.json({ message: 'No games played yet. Your ELO starts at 1200.' });
+
+      const leaderboard = this.elo.getLeaderboard(1000, 0);
+      const rank = leaderboard.findIndex((p: any) => p.handle === name) + 1;
+
+      res.json({
+        handle: player.handle,
+        elo: player.elo,
+        rank: rank || 0,
+        gamesPlayed: player.gamesPlayed,
+        wins: player.wins,
+      });
+    });
+
+    this.app.use('/api/player', router);
+    console.log('[REST] Player-facing REST API mounted at /api/player');
   }
 
   // ---------------------------------------------------------------------------

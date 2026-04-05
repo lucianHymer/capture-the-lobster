@@ -21,19 +21,19 @@ import crypto from 'node:crypto';
 // Token registry
 // ---------------------------------------------------------------------------
 
-const TOKEN_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
+export const TOKEN_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
 
-interface TokenEntry {
+export interface TokenEntry {
   agentId: string;
   name: string;
   expiresAt: number;
 }
 
 /** Global token registry: token -> entry. Survives session reconnects. */
-const tokenRegistry = new Map<string, TokenEntry>();
+export const tokenRegistry = new Map<string, TokenEntry>();
 
 /** Global handle -> agentId registry. Ensures the same name always maps to the same agentId. */
-const handleRegistry = new Map<string, string>();
+export const handleRegistry = new Map<string, string>();
 
 /** Look up agentId by token (returns null if missing or expired) */
 export function getAgentIdFromToken(token: string): string | null {
@@ -147,7 +147,7 @@ export function notifyTurnResolved(gameId: string): void {
   }
 }
 
-function waitForNextTurn(gameId: string, maxWaitMs: number = 60000): Promise<void> {
+export function waitForNextTurn(gameId: string, maxWaitMs: number = 60000): Promise<void> {
   return new Promise<void>((resolve) => {
     if (!turnWaiters.has(gameId)) turnWaiters.set(gameId, new Set());
     const waiters = turnWaiters.get(gameId)!;
@@ -176,7 +176,7 @@ const agentWaiters = new Map<string, Set<() => void>>();
 // ---------------------------------------------------------------------------
 
 /** Tracks how many messages each agent has been shown, keyed by agentId + context */
-const agentMessageCursor = new Map<string, number>();
+export const agentMessageCursor = new Map<string, number>();
 
 function getMessageCursorKey(agentId: string, context: string): string {
   return `${agentId}:${context}`;
@@ -184,7 +184,7 @@ function getMessageCursorKey(agentId: string, context: string): string {
 
 /** Get new messages since this agent last received a response, and advance cursor.
  *  Filters out the agent's own messages to save tokens — they already know what they said. */
-function getNewMessages(agentId: string, context: string, allMessages: any[]): any[] {
+export function getNewMessages(agentId: string, context: string, allMessages: any[]): any[] {
   const key = getMessageCursorKey(agentId, context);
   const lastSeen = agentMessageCursor.get(key) ?? 0;
   const newMsgs = allMessages.slice(lastSeen).filter((m: any) => m.from !== agentId);
@@ -193,7 +193,7 @@ function getNewMessages(agentId: string, context: string, allMessages: any[]): a
 }
 
 /** Peek at new messages without advancing cursor */
-function peekNewMessages(agentId: string, context: string, allMessages: any[]): any[] {
+export function peekNewMessages(agentId: string, context: string, allMessages: any[]): any[] {
   const key = getMessageCursorKey(agentId, context);
   const lastSeen = agentMessageCursor.get(key) ?? 0;
   return allMessages.slice(lastSeen);
@@ -206,12 +206,12 @@ function peekNewMessages(agentId: string, context: string, allMessages: any[]): 
 const agentLastKnownTurn = new Map<string, number>();
 
 /** Record the turn number the agent last received full state for */
-function setAgentLastTurn(agentId: string, turn: number): void {
+export function setAgentLastTurn(agentId: string, turn: number): void {
   agentLastKnownTurn.set(agentId, turn);
 }
 
 /** Check if the game turn has advanced past what the agent last saw */
-function hasAgentMissedTurn(agentId: string, currentTurn: number): boolean {
+export function hasAgentMissedTurn(agentId: string, currentTurn: number): boolean {
   const lastTurn = agentLastKnownTurn.get(agentId);
   return lastTurn !== undefined && currentTurn > lastTurn;
 }
@@ -225,7 +225,7 @@ export function notifyAgent(agentId: string): void {
   }
 }
 
-function waitForAgentUpdate(agentId: string, maxWaitMs: number = 25000): Promise<void> {
+export function waitForAgentUpdate(agentId: string, maxWaitMs: number = 25000): Promise<void> {
   return new Promise<void>((resolve) => {
     if (!agentWaiters.has(agentId)) agentWaiters.set(agentId, new Set());
     const waiters = agentWaiters.get(agentId)!;
@@ -244,7 +244,7 @@ function waitForAgentUpdate(agentId: string, maxWaitMs: number = 25000): Promise
 }
 
 /** Game rules text */
-const GAME_RULES = `# Capture the Lobster — Game Rules
+export const GAME_RULES = `# Capture the Lobster — Game Rules
 
 Competitive team-based capture-the-flag for AI agents on a hex grid.
 
@@ -358,7 +358,7 @@ Don't just play the game. Build systems that make you better at it.
 // Lightweight updates envelope — returned by all action tools
 // ---------------------------------------------------------------------------
 
-function buildUpdates(
+export function buildUpdates(
   agentId: string,
   resolveGame: GameResolver,
   resolveLobby: LobbyResolver,
@@ -407,7 +407,7 @@ function buildUpdates(
 }
 
 /** Check if there are pending updates (relay messages or lobby chat) the agent hasn't seen */
-function hasPendingUpdates(
+export function hasPendingUpdates(
   agentId: string,
   resolveGame: GameResolver,
   resolveLobby: LobbyResolver,

@@ -4,6 +4,13 @@
  * Game-agnostic: the bot doesn't know what game it's playing until it
  * calls get_guide(). System prompt is generic, game rules come from the
  * server's MCP tools.
+ *
+ * TODO: Migrate to use shared GameClient + registerGameTools from
+ * packages/cli/src/{game-client,mcp-tools}.ts. Each bot would get a
+ * GameClient(serverUrl, botToken) and an in-process McpServer with
+ * registerGameTools(server, client, { botMode: true }). The Claude
+ * Agent SDK would connect via a subprocess MCP wrapper script, since
+ * it needs either HTTP or stdio transport (no in-process option).
  */
 
 import { query } from '@anthropic-ai/claude-agent-sdk';
